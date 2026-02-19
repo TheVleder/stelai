@@ -184,6 +184,10 @@ final class StableDiffusionService {
     /// The loaded SD pipeline (nil until models downloaded + initialized).
     private var pipeline: StableDiffusionPipeline?
 
+    /// Speed tracking
+    private var speedSampleTime: CFAbsoluteTime = 0
+    private var speedSampleBytes: Int64 = 0
+
     /// Directory where SD model files are stored.
     private let modelsDirectory: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -352,7 +356,7 @@ final class StableDiffusionService {
 
     // MARK: - Private: Download
 
-    /// Downloads a single file with progress tracking.
+    /// Downloads a single file using native URLSession download (max speed).
     private func downloadFile(_ file: SDModelFile, to destination: URL, index: Int, total: Int) async throws {
         // Update UI stats
         currentDownloadFile = file.localRelativePath
@@ -361,6 +365,8 @@ final class StableDiffusionService {
         downloadedMB = 0
         downloadSpeedMBps = 0
         currentFileTotalMB = Double(file.expectedSizeMB)
+        speedSampleTime = CFAbsoluteTimeGetCurrent()
+        speedSampleBytes = 0
 
         state = .downloading(progress: downloadProgress)
         DebugLogger.shared.log("⬇️ [\(index + 1)/\(total)] \(file.localRelativePath) (\(file.expectedSizeMB) MB)", level: .info)
@@ -370,55 +376,53 @@ final class StableDiffusionService {
         try? FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
 
         var request = URLRequest(url: file.remoteURL)
-        request.timeoutInterval = 600 // 10 min for large files
+        request.timeoutInterval = 600
 
-        let (asyncBytes, response) = try await URLSession.shared.bytes(for: request)
+        // Use delegate for progress tracking at full network speed
+        let progressDelegate = SDDownloadDelegate { [weak self] bytesWritten, totalExpected in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let fileProgress = totalExpected > 0
+                    ? Double(bytesWritten) / Double(totalExpected)
+                    : 0.0
+                self.downloadedMB = Double(bytesWritten) / (1024 * 1024)
+                self.currentFileTotalMB = Double(totalExpected) / (1024 * 1024)
 
-        if let httpResponse = response as? HTTPURLResponse,
-           !(200...299).contains(httpResponse.statusCode) {
-            throw StableDiffusionError.httpError(statusCode: httpResponse.statusCode)
-        }
+                let baseProgress = Double(index) / Double(total)
+                let segmentSize = 1.0 / Double(total)
+                self.downloadProgress = baseProgress + (fileProgress * segmentSize)
+                self.state = .downloading(progress: self.downloadProgress)
 
-        let expectedLength = response.expectedContentLength
-        var receivedData = Data()
-        if expectedLength > 0 {
-            receivedData.reserveCapacity(Int(expectedLength))
-            currentFileTotalMB = Double(expectedLength) / (1024 * 1024)
-        }
-
-        var lastReportedPercent = 0
-        var speedSampleTime = CFAbsoluteTimeGetCurrent()
-        var speedSampleBytes = 0
-
-        for try await byte in asyncBytes {
-            receivedData.append(byte)
-
-            if expectedLength > 0 {
-                let fileProgress = Double(receivedData.count) / Double(expectedLength)
-                let percent = Int(fileProgress * 100)
-                if percent > lastReportedPercent {
-                    lastReportedPercent = percent
-                    let baseProgress = Double(index) / Double(total)
-                    let segmentSize = 1.0 / Double(total)
-                    downloadProgress = baseProgress + (fileProgress * segmentSize)
-                    state = .downloading(progress: downloadProgress)
-                    downloadedMB = Double(receivedData.count) / (1024 * 1024)
-
-                    // Speed calculation (update every ~2%)
-                    let now = CFAbsoluteTimeGetCurrent()
-                    let elapsed = now - speedSampleTime
-                    if elapsed > 0.5 {
-                        let bytesDelta = receivedData.count - speedSampleBytes
-                        downloadSpeedMBps = (Double(bytesDelta) / elapsed) / (1024 * 1024)
-                        speedSampleTime = now
-                        speedSampleBytes = receivedData.count
-                    }
+                // Speed calculation (rolling 1s window)
+                let now = CFAbsoluteTimeGetCurrent()
+                let elapsed = now - self.speedSampleTime
+                if elapsed > 1.0 {
+                    let bytesDelta = bytesWritten - self.speedSampleBytes
+                    self.downloadSpeedMBps = (Double(bytesDelta) / elapsed) / (1024 * 1024)
+                    self.speedSampleTime = now
+                    self.speedSampleBytes = bytesWritten
                 }
             }
         }
 
-        try receivedData.write(to: destination)
-        DebugLogger.shared.log("✅ \(file.localRelativePath) — \(receivedData.count / (1024*1024)) MB", level: .info)
+        // Native download — operates at full network speed (no byte-by-byte iteration)
+        let (tempURL, response) = try await URLSession.shared.download(for: request, delegate: progressDelegate)
+
+        if let httpResponse = response as? HTTPURLResponse,
+           !(200...299).contains(httpResponse.statusCode) {
+            try? FileManager.default.removeItem(at: tempURL)
+            throw StableDiffusionError.httpError(statusCode: httpResponse.statusCode)
+        }
+
+        // Move to final destination
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destination.path) {
+            try fm.removeItem(at: destination)
+        }
+        try fm.moveItem(at: tempURL, to: destination)
+
+        let fileSizeMB = ((try? fm.attributesOfItem(atPath: destination.path)[.size] as? Int) ?? 0) / (1024 * 1024)
+        DebugLogger.shared.log("✅ \(file.localRelativePath) — \(fileSizeMB) MB", level: .info)
     }
 
     // MARK: - Private: Pipeline
@@ -488,5 +492,35 @@ enum StableDiffusionError: LocalizedError {
         case .generationFailed(let detail):
             return "Generación fallida: \(detail)"
         }
+    }
+}
+
+// MARK: - Download Delegate (Full-Speed Native Downloads)
+
+/// URLSession download delegate that reports progress at full network speed.
+/// Used instead of byte-by-byte async iteration which was catastrophically slow.
+private class SDDownloadDelegate: NSObject, URLSessionDownloadDelegate {
+    let onProgress: (_ bytesWritten: Int64, _ totalExpected: Int64) -> Void
+
+    init(onProgress: @escaping (_ bytesWritten: Int64, _ totalExpected: Int64) -> Void) {
+        self.onProgress = onProgress
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        // File is handled by the async return value of URLSession.download(for:delegate:)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        onProgress(totalBytesWritten, totalBytesExpectedToWrite)
     }
 }
