@@ -332,6 +332,20 @@ struct ContentView: View {
                     )
                 }
                 .buttonStyle(.plain)
+
+                NavigationLink(destination: SettingsView()) {
+                    actionCardLabel(
+                        icon: "gearshape.fill",
+                        title: "Ajustes",
+                        subtitle: "Estado de modelos IA y configuración",
+                        gradient: LinearGradient(
+                            colors: [StyleColors.textSecondary, StyleColors.textTertiary],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, StyleSpacing.lg)
 

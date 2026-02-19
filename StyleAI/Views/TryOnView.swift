@@ -41,6 +41,12 @@ struct TryOnView: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    /// File path for persisted user photo
+    private static let photoURL: URL = {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docs.appendingPathComponent("StyleAI_userPhoto.jpg")
+    }()
+
     // MARK: - Computed
 
     private var currentOutfit: OutfitSelection {
@@ -106,6 +112,7 @@ struct TryOnView: View {
         .onChange(of: selectedTop) { _, _ in triggerTryOn() }
         .onChange(of: selectedBottom) { _, _ in triggerTryOn() }
         .onChange(of: selectedShoes) { _, _ in triggerTryOn() }
+        .onAppear { loadPersistedPhoto() }
     }
 
     // MARK: - Background
@@ -483,6 +490,7 @@ struct TryOnView: View {
                 userPhoto = image
                 compositeImage = nil
                 engine.reset()
+                persistPhoto(image)
                 DebugLogger.shared.log("✅ Photo loaded: \(Int(image.size.width))×\(Int(image.size.height))", level: .success)
 
                 // Auto-apply if garments are already selected
@@ -532,9 +540,37 @@ struct TryOnView: View {
             selectedBottom = nil
             selectedShoes = nil
             compositeImage = nil
+            userPhoto = nil
             engine.reset()
+            clearPersistedPhoto()
         }
         DebugLogger.shared.log("🔄 Outfit reset", level: .info)
+    }
+
+    // MARK: - Photo Persistence
+
+    /// Save photo to disk so it persists across sessions.
+    private func persistPhoto(_ image: UIImage) {
+        if let data = image.jpegData(compressionQuality: 0.85) {
+            try? data.write(to: Self.photoURL)
+            DebugLogger.shared.log("💾 Photo persisted to disk", level: .info)
+        }
+    }
+
+    /// Load persisted photo on view appear.
+    private func loadPersistedPhoto() {
+        guard userPhoto == nil else { return } // Don't reload if already set
+        if let data = try? Data(contentsOf: Self.photoURL),
+           let image = UIImage(data: data) {
+            userPhoto = image
+            DebugLogger.shared.log("📂 Loaded persisted photo: \(Int(image.size.width))×\(Int(image.size.height))", level: .info)
+        }
+    }
+
+    /// Remove persisted photo from disk.
+    private func clearPersistedPhoto() {
+        try? FileManager.default.removeItem(at: Self.photoURL)
+        DebugLogger.shared.log("🗑️ Persisted photo cleared", level: .info)
     }
 
     /// Save the current look (composite image).
