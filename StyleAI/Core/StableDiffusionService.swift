@@ -13,61 +13,72 @@ import CoreML
 
 // MARK: - SD Model Descriptor
 
-/// Describes one CoreML model file that must be downloaded for the SD pipeline.
+/// Describes a single downloadable file required by the SD pipeline.
 struct SDModelFile: Identifiable {
     let id: String
     let fileName: String
     let remoteURL: URL
     let expectedSizeMB: Int
+    /// Local sub-path relative to the models directory (e.g. "TextEncoder.mlmodelc/weights/weight.bin").
+    let localRelativePath: String
 
-    /// Base URL for the compiled split_einsum_v2 models on Hugging Face.
-    static let baseURL = "https://huggingface.co/apple/coreml-stable-diffusion-2-1-base/resolve/main/split_einsum_v2/compiled/"
+    /// Base URL for the compiled split_einsum models on Hugging Face.
+    static let baseURL = "https://huggingface.co/apple/coreml-stable-diffusion-2-1-base/resolve/main/split_einsum/compiled/"
 
-    /// All files required for the inpainting pipeline.
-    static let requiredFiles: [SDModelFile] = [
-        SDModelFile(
-            id: "text_encoder",
-            fileName: "TextEncoder.mlmodelc",
-            remoteURL: URL(string: baseURL + "TextEncoder.mlmodelc.zip")!,
-            expectedSizeMB: 250
-        ),
-        SDModelFile(
-            id: "unet_chunk1",
-            fileName: "UnetChunk1.mlmodelc",
-            remoteURL: URL(string: baseURL + "UnetChunk1.mlmodelc.zip")!,
-            expectedSizeMB: 700
-        ),
-        SDModelFile(
-            id: "unet_chunk2",
-            fileName: "UnetChunk2.mlmodelc",
-            remoteURL: URL(string: baseURL + "UnetChunk2.mlmodelc.zip")!,
-            expectedSizeMB: 700
-        ),
-        SDModelFile(
-            id: "vae_decoder",
-            fileName: "VAEDecoder.mlmodelc",
-            remoteURL: URL(string: baseURL + "VAEDecoder.mlmodelc.zip")!,
-            expectedSizeMB: 95
-        ),
-        SDModelFile(
-            id: "vae_encoder",
-            fileName: "VAEEncoder.mlmodelc",
-            remoteURL: URL(string: baseURL + "VAEEncoder.mlmodelc.zip")!,
-            expectedSizeMB: 95
-        ),
-        // Tokenizer resources (small)
-        SDModelFile(
+    /// Sub-files inside each .mlmodelc bundle.
+    private static let mlmodelcSubFiles = [
+        "coremldata.bin",
+        "metadata.json",
+        "model.mil",
+        "weights/weight.bin"
+    ]
+
+    /// Generates all download items for a single .mlmodelc model.
+    private static func modelFiles(id: String, name: String, weightSizeMB: Int) -> [SDModelFile] {
+        mlmodelcSubFiles.map { sub in
+            SDModelFile(
+                id: "\(id)_\(sub.replacingOccurrences(of: "/", with: "_"))",
+                fileName: sub.components(separatedBy: "/").last ?? sub,
+                remoteURL: URL(string: baseURL + "\(name)/\(sub)")!,
+                expectedSizeMB: sub.contains("weight.bin") ? weightSizeMB : 1,
+                localRelativePath: "\(name)/\(sub)"
+            )
+        }
+    }
+
+    /// All individual files required for the pipeline.
+    static let requiredFiles: [SDModelFile] = {
+        var files: [SDModelFile] = []
+        files += modelFiles(id: "text_encoder", name: "TextEncoder.mlmodelc", weightSizeMB: 250)
+        files += modelFiles(id: "unet_chunk1",  name: "UnetChunk1.mlmodelc",  weightSizeMB: 650)
+        files += modelFiles(id: "unet_chunk2",  name: "UnetChunk2.mlmodelc",  weightSizeMB: 650)
+        files += modelFiles(id: "vae_decoder",  name: "VAEDecoder.mlmodelc",  weightSizeMB: 90)
+        files += modelFiles(id: "vae_encoder",  name: "VAEEncoder.mlmodelc",  weightSizeMB: 90)
+        // Tokenizer resources
+        files.append(SDModelFile(
             id: "vocab",
             fileName: "vocab.json",
-            remoteURL: URL(string: "https://huggingface.co/apple/coreml-stable-diffusion-2-1-base/resolve/main/split_einsum_v2/compiled/vocab.json")!,
-            expectedSizeMB: 1
-        ),
-        SDModelFile(
+            remoteURL: URL(string: baseURL + "vocab.json")!,
+            expectedSizeMB: 1,
+            localRelativePath: "vocab.json"
+        ))
+        files.append(SDModelFile(
             id: "merges",
             fileName: "merges.txt",
-            remoteURL: URL(string: "https://huggingface.co/apple/coreml-stable-diffusion-2-1-base/resolve/main/split_einsum_v2/compiled/merges.txt")!,
-            expectedSizeMB: 1
-        )
+            remoteURL: URL(string: baseURL + "merges.txt")!,
+            expectedSizeMB: 1,
+            localRelativePath: "merges.txt"
+        ))
+        return files
+    }()
+
+    /// The top-level model directories needed for the pipeline to load.
+    static let modelDirectories = [
+        "TextEncoder.mlmodelc",
+        "UnetChunk1.mlmodelc",
+        "UnetChunk2.mlmodelc",
+        "VAEDecoder.mlmodelc",
+        "VAEEncoder.mlmodelc"
     ]
 
     /// Total expected download size across all model files.
@@ -76,7 +87,7 @@ struct SDModelFile: Identifiable {
     }
 }
 
-// MARK: - Service State
+// MARK: - SD Service State
 
 /// Tracks the lifecycle of the Stable Diffusion model.
 enum SDServiceState: Equatable {
@@ -167,7 +178,7 @@ final class StableDiffusionService {
     var isModelDownloaded: Bool {
         SDModelFile.requiredFiles.allSatisfy { file in
             FileManager.default.fileExists(
-                atPath: modelsDirectory.appendingPathComponent(file.fileName).path
+                atPath: modelsDirectory.appendingPathComponent(file.localRelativePath).path
             )
         }
     }
@@ -194,24 +205,32 @@ final class StableDiffusionService {
         let files = SDModelFile.requiredFiles
         let totalFiles = files.count
 
+        // Create all .mlmodelc subdirectories upfront
+        let fm = FileManager.default
+        for dirName in SDModelFile.modelDirectories {
+            let dirURL = modelsDirectory.appendingPathComponent(dirName, isDirectory: true)
+            let weightsDir = dirURL.appendingPathComponent("weights", isDirectory: true)
+            try? fm.createDirectory(at: weightsDir, withIntermediateDirectories: true)
+        }
+
         DebugLogger.shared.log("⬇️ Starting SD model download (\(totalFiles) files, ~\(SDModelFile.totalSizeMB) MB)", level: .info)
 
         for (index, file) in files.enumerated() {
-            let destinationURL = modelsDirectory.appendingPathComponent(file.fileName)
+            let destinationURL = modelsDirectory.appendingPathComponent(file.localRelativePath)
 
             // Skip if already downloaded
-            if FileManager.default.fileExists(atPath: destinationURL.path) {
+            if fm.fileExists(atPath: destinationURL.path) {
                 let progress = Double(index + 1) / Double(totalFiles)
                 downloadProgress = progress
                 state = .downloading(progress: progress)
-                DebugLogger.shared.log("✅ \(file.fileName) — ya descargado", level: .info)
+                DebugLogger.shared.log("✅ \(file.localRelativePath) — ya descargado", level: .info)
                 continue
             }
 
             do {
-                try await downloadFile(file, index: index, total: totalFiles)
+                try await downloadFile(file, to: destinationURL, index: index, total: totalFiles)
             } catch {
-                let message = "Error descargando \(file.fileName): \(error.localizedDescription)"
+                let message = "Error descargando \(file.localRelativePath): \(error.localizedDescription)"
                 state = .error(message: message)
                 DebugLogger.shared.log("❌ \(message)", level: .error)
                 return
@@ -257,6 +276,7 @@ final class StableDiffusionService {
             // Resize input to 512×512 (SD 2.1 native resolution)
             let inputCGImage = resizeTo512(personImage)
             let maskCGImage = resizeTo512(mask)
+            _ = maskCGImage // Reserved for future inpainting support
 
             // Build SD configuration
             var sdConfig = StableDiffusionPipeline.Configuration(prompt: prompt)
@@ -312,16 +332,14 @@ final class StableDiffusionService {
 
     // MARK: - Private: Download
 
-    /// Downloads a single model file with progress tracking.
-    private func downloadFile(_ file: SDModelFile, index: Int, total: Int) async throws {
-        let destinationURL = modelsDirectory.appendingPathComponent(file.fileName)
-        let isZip = file.remoteURL.pathExtension == "zip"
-        let downloadDest = isZip
-            ? modelsDirectory.appendingPathComponent(file.fileName + ".zip")
-            : destinationURL
-
+    /// Downloads a single file with progress tracking.
+    private func downloadFile(_ file: SDModelFile, to destination: URL, index: Int, total: Int) async throws {
         state = .downloading(progress: downloadProgress)
-        DebugLogger.shared.log("⬇️ [\(index + 1)/\(total)] \(file.fileName) (\(file.expectedSizeMB) MB)", level: .info)
+        DebugLogger.shared.log("⬇️ [\(index + 1)/\(total)] \(file.localRelativePath) (\(file.expectedSizeMB) MB)", level: .info)
+
+        // Ensure parent directory exists
+        let parentDir = destination.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
 
         var request = URLRequest(url: file.remoteURL)
         request.timeoutInterval = 600 // 10 min for large files
@@ -357,34 +375,8 @@ final class StableDiffusionService {
             }
         }
 
-        try receivedData.write(to: downloadDest)
-
-        // Extract ZIP if needed
-        if isZip {
-            state = .extracting
-            DebugLogger.shared.log("📦 Extracting \(file.fileName)...", level: .info)
-
-            let fm = FileManager.default
-            // For .mlmodelc ZIPs, unzip to the models directory
-            let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-            try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
-            defer { try? fm.removeItem(at: tempDir) }
-
-            // Use built-in decompression
-            try? fm.removeItem(at: destinationURL)
-
-            // Attempt to decompress the data
-            if let decompressed = try? (receivedData as NSData).decompressed(using: .zlib) as Data {
-                try decompressed.write(to: destinationURL)
-            } else {
-                // Fallback: move as-is and let CoreML handle it
-                try fm.moveItem(at: downloadDest, to: destinationURL)
-            }
-
-            try? fm.removeItem(at: downloadDest)
-        }
-
-        DebugLogger.shared.log("✅ \(file.fileName) — \(receivedData.count / (1024*1024)) MB", level: .info)
+        try receivedData.write(to: destination)
+        DebugLogger.shared.log("✅ \(file.localRelativePath) — \(receivedData.count / (1024*1024)) MB", level: .info)
     }
 
     // MARK: - Private: Pipeline
