@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var logoTapCount = 0
     @State private var showIncompatibleAlert = false
     @State private var compatibilityResult: DeviceCompatibilityResult?
+    @State private var navigateToTryOn = false
 
     var body: some View {
         NavigationStack {
@@ -295,32 +296,33 @@ struct ContentView: View {
 
             // Action cards
             VStack(spacing: StyleSpacing.lg) {
+                // Probador Virtual — main VTO feature
+                NavigationLink(destination: TryOnView()) {
+                    actionCardLabel(
+                        icon: "person.crop.rectangle.stack",
+                        title: "Probador Virtual",
+                        subtitle: "Pruébate ropa con IA sobre tu foto",
+                        gradient: LinearGradient(
+                            colors: [StyleColors.primaryMid, StyleColors.primaryLight],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                }
+                .buttonStyle(.plain)
+
                 actionCard(
                     icon: "camera.viewfinder",
                     title: "Escanear Armario",
-                    subtitle: "Fotografía y cataloga tus prendas con IA",
-                    gradient: LinearGradient(
-                        colors: [StyleColors.primaryMid, StyleColors.primaryLight],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                ) {
-                    DebugLogger.shared.log("📸 User tapped: Escanear Armario", level: .info)
-                    // TODO: Navigate to scanner view
-                }
-
-                actionCard(
-                    icon: "tshirt.fill",
-                    title: "Mi Armario",
-                    subtitle: "Explora y combina tu colección virtual",
+                    subtitle: "Fotografía y cataloga tus prendas",
                     gradient: LinearGradient(
                         colors: [StyleColors.accentRose, StyleColors.accentGold],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
                 ) {
-                    DebugLogger.shared.log("👔 User tapped: Mi Armario", level: .info)
-                    // TODO: Navigate to wardrobe view
+                    DebugLogger.shared.log("📸 User tapped: Escanear Armario", level: .info)
+                    // TODO: Navigate to scanner view
                 }
 
                 actionCard(
@@ -388,6 +390,45 @@ struct ContentView: View {
             .glassCard()
         }
         .buttonStyle(.plain)
+    }
+
+    /// Label-only version of actionCard for use inside NavigationLink.
+    private func actionCardLabel(
+        icon: String,
+        title: String,
+        subtitle: String,
+        gradient: LinearGradient
+    ) -> some View {
+        HStack(spacing: StyleSpacing.lg) {
+            ZStack {
+                Circle()
+                    .fill(gradient.opacity(0.3))
+                    .frame(width: 56, height: 56)
+
+                Image(systemName: icon)
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(.white)
+            }
+
+            VStack(alignment: .leading, spacing: StyleSpacing.xxs) {
+                Text(title)
+                    .font(StyleTypography.headline)
+                    .foregroundStyle(.white)
+
+                Text(subtitle)
+                    .font(StyleTypography.footnote)
+                    .foregroundStyle(StyleColors.textSecondary)
+                    .lineLimit(2)
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(StyleColors.textTertiary)
+        }
+        .padding(StyleSpacing.lg)
+        .glassCard()
     }
 
     private var quickStatsBar: some View {
