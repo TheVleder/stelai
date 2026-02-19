@@ -122,14 +122,19 @@ final class TryOnEngine {
             DebugLogger.shared.log("⚠️ VTO: No person detected — using rectangle fallback", level: .warning)
         }
 
-        // Step 2: Composite garments onto detected body
+        // Step 2: Composite garments onto detected body (with minimum display time)
         let photo = userPhoto
         let outfitCopy = outfit
         let mask = personMask
 
-        let result = await Task.detached(priority: .userInitiated) {
+        // Run compositing and minimum delay in parallel
+        async let compositeTask = Task.detached(priority: .userInitiated) {
             await Self.compositeOutfit(onto: photo, outfit: outfitCopy, personMask: mask)
         }.value
+        async let minimumDelay: Void = Task.sleep(nanoseconds: 600_000_000) // 600ms minimum
+
+        let result = await compositeTask
+        _ = try? await minimumDelay
 
         let elapsed = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
         lastProcessingTimeMs = elapsed
