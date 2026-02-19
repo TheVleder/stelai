@@ -10,13 +10,13 @@ on:
 jobs:
   build:
     name: Build Unsigned IPA
-    runs-on: macos-15
+    runs-on: macos-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode
+      - name: Select Latest Xcode
         run: |
           # Use latest available Xcode on the runner
           XCODE_PATH=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
@@ -24,10 +24,14 @@ jobs:
             echo "❌ No Xcode found"
             exit 1
           fi
-          echo "Using: $XCODE_PATH"
+          echo "📱 Using: $XCODE_PATH"
           sudo xcode-select -s "$XCODE_PATH"
+          echo "--- Xcode version ---"
           xcodebuild -version
+          echo "--- Swift version ---"
           swift --version
+          echo "--- Available SDKs ---"
+          xcodebuild -showsdks | grep iOS
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -47,6 +51,7 @@ jobs:
 
       - name: Build for Device (Unsigned)
         run: |
+          set -o pipefail
           xcodebuild build \
             -project StyleAI.xcodeproj \
             -scheme StyleAI \
@@ -57,23 +62,48 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             ONLY_ACTIVE_ARCH=NO \
-            | xcpretty && echo "✅ Build succeeded"
+            2>&1 | tee build.log | xcpretty
+          echo "✅ Build succeeded"
 
       - name: Package Unsigned IPA
         run: |
           mkdir -p build/ipa
 
           # Find the .app bundle in the build products
-          APP_PATH=$(find build/DerivedData/Build/Products/Release-iphoneos -name "*.app" -type d | head -1)
+          echo "📂 Searching for .app in build products..."
+          find build/DerivedData/Build/Products -name "*.app" -type d 2>/dev/null
+
+          APP_PATH=$(find build/DerivedData/Build/Products/Release-iphoneos -name "*.app" -type d 2>/dev/null | head -1)
 
           if [ -z "$APP_PATH" ]; then
-            echo "❌ No .app bundle found in build products"
-            echo "📂 Build directory contents:"
-            find build/DerivedData/Build/Products -type d | head -30
+            echo "⚠️ Not found in Release-iphoneos, searching all products..."
+            APP_PATH=$(find build/DerivedData/Build/Products -name "*.app" -type d 2>/dev/null | head -1)
+          fi
+
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ No .app bundle found anywhere in build products"
+            echo "📂 Full build directory listing:"
+            find build/DerivedData/Build/Products -type f | head -50
+            echo "📋 Last 50 lines of build log:"
+            tail -50 build.log
             exit 1
           fi
 
           echo "📦 Found app: $APP_PATH"
+          echo "📏 App size: $(du -sh "$APP_PATH" | cut -f1)"
+
+          # Verify the binary exists and is ARM64
+          APP_NAME=$(basename "$APP_PATH" .app)
+          BINARY_PATH="$APP_PATH/$APP_NAME"
+          if [ -f "$BINARY_PATH" ]; then
+            echo "🔍 Binary architecture:"
+            file "$BINARY_PATH"
+            lipo -info "$BINARY_PATH" 2>/dev/null || true
+          else
+            echo "⚠️ Expected binary not found at: $BINARY_PATH"
+            echo "📂 App bundle contents:"
+            ls -la "$APP_PATH/"
+          fi
 
           # Create Payload directory and copy .app
           mkdir -p build/Payload
