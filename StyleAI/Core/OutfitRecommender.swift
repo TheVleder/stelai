@@ -19,7 +19,11 @@ struct OutfitRecommendation: Sendable {
 
     /// Outfit selection for use with TryOnEngine.
     var asOutfitSelection: OutfitSelection {
-        OutfitSelection(top: top, bottom: bottom, shoes: shoes)
+        OutfitSelection(
+            top: CarouselGarment.fromSample(top),
+            bottom: CarouselGarment.fromSample(bottom),
+            shoes: CarouselGarment.fromSample(shoes)
+        )
     }
 }
 

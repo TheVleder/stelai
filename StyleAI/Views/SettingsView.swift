@@ -133,7 +133,7 @@ struct SettingsView: View {
             }
 
             // Progress bar (if downloading)
-            if sdService.isDownloading {
+            if sdService.state.isDownloading {
                 VStack(spacing: StyleSpacing.xs) {
                     ProgressView(value: sdService.downloadProgress)
                         .tint(StyleColors.primaryMid)
@@ -166,7 +166,7 @@ struct SettingsView: View {
 
             // Action buttons
             HStack(spacing: StyleSpacing.md) {
-                if !sdService.state.isReady && !sdService.isDownloading {
+                if !sdService.state.isReady && !sdService.state.isDownloading {
                     Button {
                         Task { await ModelManager.shared.downloadSDModel() }
                     } label: {
@@ -270,12 +270,15 @@ struct SettingsView: View {
     private var sdStateIcon: some View {
         Group {
             switch sdService.state {
-            case .idle:
+            case .notDownloaded:
                 Image(systemName: "arrow.down.circle")
                     .foregroundStyle(StyleColors.textTertiary)
             case .downloading:
                 ProgressView()
                     .tint(StyleColors.primaryMid)
+            case .extracting:
+                ProgressView()
+                    .tint(.orange)
             case .loading:
                 ProgressView()
                     .tint(.orange)
@@ -297,12 +300,13 @@ struct SettingsView: View {
 
     private var sdStateDescription: String {
         switch sdService.state {
-        case .idle:         return "No descargado — toca para descargar"
+        case .notDownloaded: return "No descargado — toca para descargar"
         case .downloading:  return "Descargando modelo..."
+        case .extracting:   return "Extrayendo archivos..."
         case .loading:      return "Cargando pipeline..."
         case .ready:       return "Listo para generar looks con IA"
         case .generating:   return "Generando imagen..."
-        case .error(let msg): return "Error: \(msg)"
+        case .error(let msg):  return "Error: \(msg)"
         }
     }
 }
