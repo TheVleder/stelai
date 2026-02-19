@@ -1,0 +1,50 @@
+workflows:
+  ios-build:
+    name: Build Unsigned IPA
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install XcodeGen
+        script: brew install xcodegen
+      - name: Generate Xcode Project
+        script: |
+          xcodegen generate
+          echo "✅ Generated .xcodeproj"
+      - name: Resolve Swift Packages
+        script: |
+          xcodebuild -resolvePackageDependencies \
+            -project StyleAI.xcodeproj \
+            -scheme StyleAI
+      - name: Build Unsigned
+        script: |
+          set -o pipefail
+          xcodebuild build \
+            -project StyleAI.xcodeproj \
+            -scheme StyleAI \
+            -destination 'generic/platform=iOS' \
+            -configuration Release \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO
+      - name: Package IPA
+        script: |
+          mkdir -p build/ipa
+          APP_PATH=$(find build/DerivedData/Build/Products/Release-iphoneos -name "*.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ No .app found"
+            exit 1
+          fi
+          echo "📦 Found: $APP_PATH"
+          mkdir -p build/Payload
+          cp -r "$APP_PATH" build/Payload/
+          cd build
+          zip -r ipa/StyleAI-unsigned.ipa Payload
+          echo "✅ IPA created"
+          ls -lh ipa/
+    artifacts:
+      - build/ipa/*.ipa
