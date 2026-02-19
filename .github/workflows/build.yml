@@ -16,7 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode 26
+      - name: Select Xcode
         run: |
           # Use latest available Xcode on the runner
           XCODE_PATH=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
@@ -38,60 +38,52 @@ jobs:
           echo "✅ Generated .xcodeproj from project.yml"
           ls -la *.xcodeproj
 
-      - name: Build (Unsigned)
+      - name: Resolve Swift Packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project StyleAI.xcodeproj \
+            -scheme StyleAI
+          echo "✅ Swift packages resolved"
+
+      - name: Build for Device (Unsigned)
         run: |
           xcodebuild build \
             -project StyleAI.xcodeproj \
             -scheme StyleAI \
             -destination 'generic/platform=iOS' \
             -configuration Release \
+            -derivedDataPath build/DerivedData \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             ONLY_ACTIVE_ARCH=NO \
-            | xcpretty || true
-          echo "✅ Build succeeded"
+            | xcpretty && echo "✅ Build succeeded"
 
-      - name: Archive
-        run: |
-          xcodebuild archive \
-            -project StyleAI.xcodeproj \
-            -scheme StyleAI \
-            -destination 'generic/platform=iOS' \
-            -configuration Release \
-            -archivePath build/StyleAI.xcarchive \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            ONLY_ACTIVE_ARCH=NO \
-            | xcpretty || true
-          echo "✅ Archive created"
-
-      - name: Export Unsigned IPA
+      - name: Package Unsigned IPA
         run: |
           mkdir -p build/ipa
-          # Create ExportOptions.plist for unsigned export
-          cat > build/ExportOptions.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>development</string>
-            <key>compileBitcode</key>
-            <false/>
-            <key>signingStyle</key>
-            <string>automatic</string>
-          </dict>
-          </plist>
-          EOF
 
-          # For unsigned builds, manually create IPA from archive
-          cd build/StyleAI.xcarchive/Products/Applications
-          mkdir -p Payload
-          cp -r "Style AI.app" Payload/ 2>/dev/null || cp -r *.app Payload/
-          zip -r ../../../ipa/StyleAI-unsigned.ipa Payload
-          cd ../../../..
+          # Find the .app bundle in the build products
+          APP_PATH=$(find build/DerivedData/Build/Products/Release-iphoneos -name "*.app" -type d | head -1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ No .app bundle found in build products"
+            echo "📂 Build directory contents:"
+            find build/DerivedData/Build/Products -type d | head -30
+            exit 1
+          fi
+
+          echo "📦 Found app: $APP_PATH"
+
+          # Create Payload directory and copy .app
+          mkdir -p build/Payload
+          cp -r "$APP_PATH" build/Payload/
+
+          # Create IPA (zip with Payload folder)
+          cd build
+          zip -r ipa/StyleAI-unsigned.ipa Payload
+          cd ..
+
           echo "✅ Unsigned IPA created"
           ls -lh build/ipa/
 
