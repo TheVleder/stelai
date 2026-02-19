@@ -117,7 +117,7 @@ enum OutfitRecommender {
         shoes: SampleGarment
     ) -> String {
         let temp = Int(weather.apparentTemperature)
-        let condition = weather.condition.lowercased()
+        _ = weather.condition.lowercased()
 
         var parts: [String] = []
 

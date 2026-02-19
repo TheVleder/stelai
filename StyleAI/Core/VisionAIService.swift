@@ -65,12 +65,13 @@ final class VisionAIService {
             do {
                 try handler.perform([request])
 
-                guard let result = request.results?.first,
-                      let pixelBuffer = result.pixelBuffer else {
+                guard let result = request.results?.first else {
                     DebugLogger.shared.log("⚠️ VisionAI: No person detected in image", level: .warning)
                     continuation.resume(returning: nil)
                     return
                 }
+
+                let pixelBuffer = result.pixelBuffer
 
                 // Convert CVPixelBuffer to CGImage
                 let ciImage = CIImage(cvPixelBuffer: pixelBuffer)

@@ -9,7 +9,7 @@ import Foundation
 import UIKit
 import CoreImage
 import CoreML
-import StableDiffusion
+@preconcurrency import StableDiffusion
 
 // MARK: - SD Model Descriptor
 
@@ -265,7 +265,6 @@ final class StableDiffusionService {
             sdConfig.stepCount = steps
             sdConfig.guidanceScale = guidanceScale
             sdConfig.startingImage = inputCGImage
-            sdConfig.maskImage = maskCGImage
             sdConfig.strength = 0.75 // How much to repaint (0.75 = strong clothing change)
             sdConfig.schedulerType = .dpmSolverMultistepScheduler
 
@@ -400,14 +399,12 @@ final class StableDiffusionService {
             let config = MLModelConfiguration()
             config.computeUnits = .cpuAndNeuralEngine // Best balance for iOS
 
-            let pipe = try await Task.detached(priority: .userInitiated) {
-                try StableDiffusionPipeline(
-                    resourcesAt: resourceURL,
-                    controlNet: [],
-                    configuration: config,
-                    reduceMemory: true // Critical for iOS — keeps peak RAM manageable
-                )
-            }.value
+            let pipe = try StableDiffusionPipeline(
+                resourcesAt: resourceURL,
+                controlNet: [],
+                configuration: config,
+                reduceMemory: true // Critical for iOS — keeps peak RAM manageable
+            )
 
             try pipe.loadResources()
 

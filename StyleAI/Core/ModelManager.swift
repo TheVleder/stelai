@@ -6,7 +6,7 @@
 // Designed for "blind debugging" — all state transitions are logged to DebugConsole.
 
 import Foundation
-import CoreML
+@preconcurrency import CoreML
 import UIKit
 import os.log
 
@@ -150,7 +150,7 @@ final class ModelManager {
     private let modelsDirectory: URL
 
     /// Memory warning observer token.
-    private var memoryObserver: (any NSObjectProtocol)?
+    nonisolated(unsafe) private var memoryObserver: (any NSObjectProtocol)?
 
     private let logger = Logger(subsystem: "com.styleai.app", category: "ModelManager")
 
@@ -364,12 +364,8 @@ final class ModelManager {
         let config = MLModelConfiguration()
         config.computeUnits = .all // Use Neural Engine + GPU + CPU
 
-        // Pre-capture for detached task
-        let loadURL = permanentURL
-        let loadConfig = config
-        let model = try await Task.detached(priority: .userInitiated) {
-            try MLModel(contentsOf: loadURL, configuration: loadConfig)
-        }.value
+        // Load model on current actor (MainActor) to avoid Sendable boundary issues
+        let model = try MLModel(contentsOf: permanentURL, configuration: config)
 
         // Extract name without extension for lookup key
         let key = fileName.replacingOccurrences(of: ".mlpackage", with: "")
