@@ -477,21 +477,56 @@ struct TryOnView: View {
                         .font(StyleTypography.headline)
                         .foregroundStyle(.white)
 
-                    Text("Stable Diffusion · ~\(SDModelFile.totalSizeMB) MB")
+                    Text("Stable Diffusion · ~\(SDModelFile.totalSizeMB) MB total")
                         .font(StyleTypography.caption)
                         .foregroundStyle(StyleColors.textSecondary)
                 }
 
-                VStack(spacing: StyleSpacing.xs) {
+                VStack(spacing: StyleSpacing.sm) {
                     ProgressView(value: sdService.downloadProgress)
                         .progressViewStyle(.linear)
                         .tint(StyleColors.accentMint)
 
-                    Text(sdService.state.displayText)
-                        .font(StyleTypography.captionMono)
-                        .foregroundStyle(StyleColors.textSecondary)
+                    // Overall progress
+                    HStack {
+                        Text("\(Int(sdService.downloadProgress * 100))%")
+                            .font(StyleTypography.captionMono)
+                            .foregroundStyle(.white)
+
+                        Spacer()
+
+                        if sdService.downloadSpeedMBps > 0 {
+                            Text(String(format: "%.1f MB/s", sdService.downloadSpeedMBps))
+                                .font(StyleTypography.captionMono)
+                                .foregroundStyle(StyleColors.accentMint)
+                        }
+                    }
+
+                    // Current file info
+                    if sdService.downloadFileTotal > 0 {
+                        HStack {
+                            Text("Archivo \(sdService.downloadFileIndex)/\(sdService.downloadFileTotal)")
+                                .font(StyleTypography.captionMono)
+                                .foregroundStyle(StyleColors.textSecondary)
+
+                            Spacer()
+
+                            Text(String(format: "%.1f/%.0f MB", sdService.downloadedMB, sdService.currentFileTotalMB))
+                                .font(StyleTypography.captionMono)
+                                .foregroundStyle(StyleColors.textSecondary)
+                        }
+                    }
+
+                    // File name
+                    if !sdService.currentDownloadFile.isEmpty {
+                        Text(sdService.currentDownloadFile)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(StyleColors.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                 }
-                .frame(width: 200)
+                .frame(width: 220)
             }
             .padding(StyleSpacing.xxl)
             .glassCard(cornerRadius: 20)

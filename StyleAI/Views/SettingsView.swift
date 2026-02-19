@@ -145,9 +145,25 @@ struct SettingsView: View {
 
                         Spacer()
 
-                        Text("~2 GB")
-                            .font(StyleTypography.captionMono)
-                            .foregroundStyle(StyleColors.textTertiary)
+                        if sdService.downloadSpeedMBps > 0 {
+                            Text(String(format: "%.1f MB/s", sdService.downloadSpeedMBps))
+                                .font(StyleTypography.captionMono)
+                                .foregroundStyle(StyleColors.accentMint)
+                        }
+                    }
+
+                    if sdService.downloadFileTotal > 0 {
+                        HStack {
+                            Text("Archivo \(sdService.downloadFileIndex)/\(sdService.downloadFileTotal)")
+                                .font(StyleTypography.captionMono)
+                                .foregroundStyle(StyleColors.textTertiary)
+
+                            Spacer()
+
+                            Text(String(format: "%.1f/%.0f MB", sdService.downloadedMB, sdService.currentFileTotalMB))
+                                .font(StyleTypography.captionMono)
+                                .foregroundStyle(StyleColors.textTertiary)
+                        }
                     }
                 }
             }

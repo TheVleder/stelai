@@ -159,6 +159,26 @@ final class StableDiffusionService {
     /// Generation progress (0.0–1.0).
     private(set) var generationProgress: Double = 0.0
 
+    // MARK: Download Stats (for UI)
+
+    /// Name of the file currently being downloaded.
+    private(set) var currentDownloadFile: String = ""
+
+    /// Index of current file being downloaded (1-based).
+    private(set) var downloadFileIndex: Int = 0
+
+    /// Total number of files to download.
+    private(set) var downloadFileTotal: Int = 0
+
+    /// Megabytes downloaded so far (for current file).
+    private(set) var downloadedMB: Double = 0.0
+
+    /// Expected total MB for current file.
+    private(set) var currentFileTotalMB: Double = 0.0
+
+    /// Current download speed in MB/s.
+    private(set) var downloadSpeedMBps: Double = 0.0
+
     // MARK: Private
 
     /// The loaded SD pipeline (nil until models downloaded + initialized).
@@ -334,6 +354,14 @@ final class StableDiffusionService {
 
     /// Downloads a single file with progress tracking.
     private func downloadFile(_ file: SDModelFile, to destination: URL, index: Int, total: Int) async throws {
+        // Update UI stats
+        currentDownloadFile = file.localRelativePath
+        downloadFileIndex = index + 1
+        downloadFileTotal = total
+        downloadedMB = 0
+        downloadSpeedMBps = 0
+        currentFileTotalMB = Double(file.expectedSizeMB)
+
         state = .downloading(progress: downloadProgress)
         DebugLogger.shared.log("⬇️ [\(index + 1)/\(total)] \(file.localRelativePath) (\(file.expectedSizeMB) MB)", level: .info)
 
@@ -355,9 +383,12 @@ final class StableDiffusionService {
         var receivedData = Data()
         if expectedLength > 0 {
             receivedData.reserveCapacity(Int(expectedLength))
+            currentFileTotalMB = Double(expectedLength) / (1024 * 1024)
         }
 
         var lastReportedPercent = 0
+        var speedSampleTime = CFAbsoluteTimeGetCurrent()
+        var speedSampleBytes = 0
 
         for try await byte in asyncBytes {
             receivedData.append(byte)
@@ -371,6 +402,17 @@ final class StableDiffusionService {
                     let segmentSize = 1.0 / Double(total)
                     downloadProgress = baseProgress + (fileProgress * segmentSize)
                     state = .downloading(progress: downloadProgress)
+                    downloadedMB = Double(receivedData.count) / (1024 * 1024)
+
+                    // Speed calculation (update every ~2%)
+                    let now = CFAbsoluteTimeGetCurrent()
+                    let elapsed = now - speedSampleTime
+                    if elapsed > 0.5 {
+                        let bytesDelta = receivedData.count - speedSampleBytes
+                        downloadSpeedMBps = (Double(bytesDelta) / elapsed) / (1024 * 1024)
+                        speedSampleTime = now
+                        speedSampleBytes = receivedData.count
+                    }
                 }
             }
         }
