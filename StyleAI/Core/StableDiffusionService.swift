@@ -499,10 +499,10 @@ enum StableDiffusionError: LocalizedError {
 
 /// URLSession download delegate that reports progress at full network speed.
 /// Used instead of byte-by-byte async iteration which was catastrophically slow.
-private class SDDownloadDelegate: NSObject, URLSessionDownloadDelegate {
-    let onProgress: (_ bytesWritten: Int64, _ totalExpected: Int64) -> Void
+private final class SDDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    let onProgress: @Sendable (_ bytesWritten: Int64, _ totalExpected: Int64) -> Void
 
-    init(onProgress: @escaping (_ bytesWritten: Int64, _ totalExpected: Int64) -> Void) {
+    init(onProgress: @escaping @Sendable (_ bytesWritten: Int64, _ totalExpected: Int64) -> Void) {
         self.onProgress = onProgress
     }
 

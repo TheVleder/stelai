@@ -408,12 +408,11 @@ struct TryOnView: View {
 
     /// Cycles the dot index for the shimmer dots animation.
     private func startDotAnimation() {
-        Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { timer in
-            if !engine.state.isProcessing {
-                timer.invalidate()
-                return
+        Task { @MainActor in
+            while engine.state.isProcessing {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                processingDotIndex = (processingDotIndex + 1) % 3
             }
-            processingDotIndex = (processingDotIndex + 1) % 3
         }
     }
 
