@@ -9,6 +9,7 @@
 // Layout: User photo on top, three carousels at the bottom.
 
 import SwiftUI
+import SwiftData
 import PhotosUI
 
 // MARK: - Try-On View
@@ -20,6 +21,9 @@ struct TryOnView: View {
     @State private var engine = TryOnEngine.shared
     @State private var sdService = StableDiffusionService.shared
 
+    /// SwiftData query for wardrobe items (real scanned garments)
+    @Query private var wardrobeItems: [WardrobeItem]
+
     /// User's selected photo.
     @State private var userPhoto: UIImage?
 
@@ -27,9 +31,9 @@ struct TryOnView: View {
     @State private var photoPickerItem: PhotosPickerItem?
 
     /// Currently selected garments per slot.
-    @State private var selectedTop: SampleGarment?
-    @State private var selectedBottom: SampleGarment?
-    @State private var selectedShoes: SampleGarment?
+    @State private var selectedTop: CarouselGarment?
+    @State private var selectedBottom: CarouselGarment?
+    @State private var selectedShoes: CarouselGarment?
 
     /// Result image from the engine.
     @State private var compositeImage: UIImage?
@@ -278,19 +282,19 @@ struct TryOnView: View {
             VStack(spacing: StyleSpacing.lg) {
                 CarouselPickerView(
                     slot: .top,
-                    garments: SampleGarments.allTops,
+                    garments: garments(for: .top),
                     selection: $selectedTop
                 )
 
                 CarouselPickerView(
                     slot: .bottom,
-                    garments: SampleGarments.allBottoms,
+                    garments: garments(for: .bottom),
                     selection: $selectedBottom
                 )
 
                 CarouselPickerView(
                     slot: .shoes,
-                    garments: SampleGarments.allShoes,
+                    garments: garments(for: .shoes),
                     selection: $selectedShoes
                 )
             }
@@ -298,6 +302,29 @@ struct TryOnView: View {
         }
         .frame(height: 460)
         .background(Color.black.opacity(0.15))
+    }
+
+    /// Merges wardrobe items with sample garments for a given slot.
+    /// Wardrobe items appear first (real photos), then samples as fallbacks.
+    private func garments(for slot: GarmentSlot) -> [CarouselGarment] {
+        // Convert wardrobe items matching this slot
+        let matchingTypes: [GarmentType]
+        switch slot {
+        case .top:    matchingTypes = [.top, .outerwear]
+        case .bottom: matchingTypes = [.bottom]
+        case .shoes:  matchingTypes = [.shoes]
+        }
+
+        let wardrobeGarments = wardrobeItems
+            .filter { matchingTypes.contains($0.type) }
+            .sorted { $0.dateAdded > $1.dateAdded }
+            .map { CarouselGarment.fromWardrobe($0) }
+
+        // Add sample garments as fallbacks
+        let sampleGarments = SampleGarments.garments(for: slot)
+            .map { CarouselGarment.fromSample($0) }
+
+        return wardrobeGarments + sampleGarments
     }
 
     // MARK: - Processing Overlay

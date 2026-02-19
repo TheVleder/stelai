@@ -314,4 +314,74 @@ final class VisionAIService {
         if tags.isEmpty { tags.insert("Casual") }
         return Array(tags).sorted()
     }
+
+    // MARK: - Garment Cropping
+
+    /// Crops a garment region from a full-body photo based on the detected garment type.
+    ///
+    /// Uses vertical body zone proportions:
+    /// - **Top**: upper 50% of image
+    /// - **Bottom**: middle 35% (from 35% to 70%)
+    /// - **Shoes**: lower 30% (from 70% to 100%)
+    /// - **Other**: full image
+    ///
+    /// - Parameters:
+    ///   - image: The full-body or garment photo.
+    ///   - type: The detected garment type.
+    /// - Returns: A cropped `UIImage` of the garment region.
+    func cropGarmentRegion(from image: UIImage, type: GarmentType) -> UIImage {
+        let size = image.size
+
+        let cropRect: CGRect
+        switch type {
+        case .top, .outerwear:
+            // Upper 50% of image
+            cropRect = CGRect(x: 0, y: 0, width: size.width, height: size.height * 0.50)
+        case .bottom:
+            // Middle zone: 35% to 70%
+            let yStart = size.height * 0.35
+            cropRect = CGRect(x: 0, y: yStart, width: size.width, height: size.height * 0.35)
+        case .shoes:
+            // Lower 30%: 70% to 100%
+            let yStart = size.height * 0.70
+            cropRect = CGRect(x: 0, y: yStart, width: size.width, height: size.height * 0.30)
+        default:
+            // Full image for accessories, full-body, etc.
+            return image
+        }
+
+        // Perform the crop
+        guard let cgImage = image.cgImage,
+              let croppedCG = cgImage.cropping(to: cropRect) else {
+            DebugLogger.shared.log("⚠️ VisionAI: Crop failed for \(type.label)", level: .warning)
+            return image
+        }
+
+        let cropped = UIImage(cgImage: croppedCG, scale: image.scale, orientation: image.imageOrientation)
+        DebugLogger.shared.log("✂️ VisionAI: Cropped \(type.label) region: \(Int(cropRect.width))×\(Int(cropRect.height))", level: .info)
+        return cropped
+    }
+
+    /// Generates a square thumbnail of the given size.
+    func generateThumbnail(from image: UIImage, size: CGFloat = 256) -> UIImage {
+        let targetSize = CGSize(width: size, height: size)
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        return renderer.image { _ in
+            // Scale to fill, center-crop
+            let aspectWidth = targetSize.width / image.size.width
+            let aspectHeight = targetSize.height / image.size.height
+            let aspectRatio = max(aspectWidth, aspectHeight)
+
+            let drawSize = CGSize(
+                width: image.size.width * aspectRatio,
+                height: image.size.height * aspectRatio
+            )
+            let drawOrigin = CGPoint(
+                x: (targetSize.width - drawSize.width) / 2,
+                y: (targetSize.height - drawSize.height) / 2
+            )
+
+            image.draw(in: CGRect(origin: drawOrigin, size: drawSize))
+        }
+    }
 }

@@ -1,13 +1,28 @@
 // ScannerView.swift
-// StyleAI — AI-Powered Garment Scanner
+// StyleAI — AI-Powered Auto Garment Scanner
 //
 // Captures garment photos via camera or photo library.
-// Uses VisionAIService for automatic garment classification,
-// then lets the user verify and save to SwiftData.
+// VisionAI automatically detects garment type, crops the garment region,
+// and saves it to SwiftData — no manual input needed.
 
 import SwiftUI
 import SwiftData
 import PhotosUI
+
+// MARK: - Detected Garment (for preview before auto-save)
+
+/// A garment detected + cropped from the scanned photo.
+struct DetectedGarment: Identifiable {
+    let id = UUID()
+    let type: GarmentType
+    let croppedImage: UIImage
+    let thumbnail: UIImage
+    let confidence: Float
+    let thermalIndex: Double
+    let styleTags: [String]
+    let dominantColor: String?
+    var saved: Bool = false
+}
 
 // MARK: - Scanner View
 
@@ -22,27 +37,14 @@ struct ScannerView: View {
     @State private var photoPickerItem: PhotosPickerItem?
     @State private var capturedImage: UIImage?
 
-    // Classification form
-    @State private var garmentName = ""
-    @State private var selectedType: GarmentType = .top
-    @State private var thermalIndex: Double = 0.5
-    @State private var selectedTags: Set<String> = []
-    @State private var material = ""
-
-    // AI classification
-    @State private var isClassifying = false
-    @State private var aiConfidence: Float = 0
-    @State private var dominantColorHex: String?
+    // AI processing
+    @State private var isProcessing = false
+    @State private var detectedGarments: [DetectedGarment] = []
+    @State private var scanComplete = false
 
     // UI state
-    @State private var isSaving = false
     @State private var showSavedToast = false
-    @State private var showingForm = false
-
-    private let availableTags = [
-        "Casual", "Formal", "Deportivo", "Elegante",
-        "Streetwear", "Bohemio", "Clásico", "Moderno"
-    ]
+    @State private var savedCount = 0
 
     var body: some View {
         ZStack {
@@ -60,11 +62,14 @@ struct ScannerView: View {
             ScrollView {
                 VStack(spacing: StyleSpacing.xl) {
                     if capturedImage == nil {
-                        // Capture phase
+                        // Phase 1: Capture
                         captureSection
-                    } else {
-                        // Classification phase
-                        classificationSection
+                    } else if isProcessing {
+                        // Phase 2: AI Processing
+                        processingSection
+                    } else if scanComplete {
+                        // Phase 3: Results
+                        resultsSection
                     }
                 }
                 .padding(.horizontal, StyleSpacing.lg)
@@ -88,12 +93,12 @@ struct ScannerView: View {
         }
         .onChange(of: capturedImage) { _, newImage in
             if let newImage {
-                Task { await classifyWithAI(newImage) }
+                Task { await autoDetectAndSave(newImage) }
             }
         }
     }
 
-    // MARK: - Capture Section
+    // MARK: - Phase 1: Capture Section
 
     private var captureSection: some View {
         VStack(spacing: StyleSpacing.xxl) {
@@ -118,11 +123,11 @@ struct ScannerView: View {
             }
 
             VStack(spacing: StyleSpacing.sm) {
-                Text("Escanea tu Prenda")
+                Text("Escanea tu Outfit")
                     .font(StyleTypography.title)
                     .foregroundStyle(.white)
 
-                Text("Toma una foto o selecciona de tu galería\npara añadirla a tu armario virtual")
+                Text("Toma una foto y la IA detectará\nautomáticamente cada prenda")
                     .font(StyleTypography.subheadline)
                     .foregroundStyle(StyleColors.textSecondary)
                     .multilineTextAlignment(.center)
@@ -130,7 +135,6 @@ struct ScannerView: View {
 
             // Action buttons
             VStack(spacing: StyleSpacing.md) {
-                // Camera button
                 Button {
                     showCamera = true
                 } label: {
@@ -154,7 +158,6 @@ struct ScannerView: View {
                     .shadow(color: StyleColors.accentRose.opacity(0.3), radius: 12, y: 6)
                 }
 
-                // Photo library picker
                 PhotosPicker(selection: $photoPickerItem, matching: .images) {
                     HStack(spacing: StyleSpacing.md) {
                         Image(systemName: "photo.on.rectangle")
@@ -171,14 +174,194 @@ struct ScannerView: View {
 
             // Tips
             VStack(alignment: .leading, spacing: StyleSpacing.sm) {
-                tipRow(icon: "checkmark.circle", text: "Fondo liso y bien iluminado")
-                tipRow(icon: "checkmark.circle", text: "Prenda extendida y visible completa")
-                tipRow(icon: "checkmark.circle", text: "Sin personas en la foto")
+                tipRow(icon: "sparkles", text: "La IA detecta: top, pantalón y zapatillas")
+                tipRow(icon: "scissors", text: "Cada prenda se recorta automáticamente")
+                tipRow(icon: "tray.and.arrow.down", text: "Se guardan sin que toques nada")
             }
             .padding(StyleSpacing.lg)
             .glassCard()
         }
     }
+
+    // MARK: - Phase 2: Processing
+
+    private var processingSection: some View {
+        VStack(spacing: StyleSpacing.xxl) {
+            Spacer().frame(height: 60)
+
+            // Original image preview (small)
+            if let image = capturedImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(StyleColors.accentMint.opacity(0.3), lineWidth: 1)
+                    )
+            }
+
+            // Processing indicator
+            VStack(spacing: StyleSpacing.md) {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(StyleColors.accentMint)
+
+                Text("Analizando outfit...")
+                    .font(StyleTypography.headline)
+                    .foregroundStyle(.white)
+
+                Text("Detectando y recortando prendas con Vision AI")
+                    .font(StyleTypography.caption)
+                    .foregroundStyle(StyleColors.textSecondary)
+            }
+            .padding(StyleSpacing.xl)
+            .glassCard()
+
+            Spacer()
+        }
+    }
+
+    // MARK: - Phase 3: Results
+
+    private var resultsSection: some View {
+        VStack(spacing: StyleSpacing.xl) {
+            // Summary header
+            HStack(spacing: StyleSpacing.sm) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(StyleColors.accentMint)
+
+                Text("\(detectedGarments.count) prenda\(detectedGarments.count == 1 ? "" : "s") detectada\(detectedGarments.count == 1 ? "" : "s")")
+                    .font(StyleTypography.headline)
+                    .foregroundStyle(.white)
+            }
+
+            // Original photo
+            if let image = capturedImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
+            }
+
+            // Detected garments grid
+            ForEach(detectedGarments) { garment in
+                detectedGarmentCard(garment)
+            }
+
+            // Action buttons
+            VStack(spacing: StyleSpacing.md) {
+                // Scan another
+                Button {
+                    resetScanner()
+                } label: {
+                    HStack(spacing: StyleSpacing.md) {
+                        Image(systemName: "camera.viewfinder")
+                            .font(.system(size: 18))
+                        Text("Escanear Otro Outfit")
+                            .font(StyleTypography.headline)
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, StyleSpacing.lg)
+                    .background(
+                        LinearGradient(
+                            colors: [StyleColors.accentRose, StyleColors.accentGold],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        ),
+                        in: RoundedRectangle(cornerRadius: StyleSpacing.buttonCornerRadius)
+                    )
+                }
+
+                // Go to Probador
+                Button {
+                    dismiss()
+                } label: {
+                    HStack(spacing: StyleSpacing.md) {
+                        Image(systemName: "person.crop.rectangle.stack")
+                            .font(.system(size: 18))
+                        Text("Ir al Probador Virtual")
+                            .font(StyleTypography.headline)
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, StyleSpacing.lg)
+                    .glassCard(cornerRadius: StyleSpacing.buttonCornerRadius)
+                }
+            }
+        }
+    }
+
+    // MARK: - Detected Garment Card
+
+    private func detectedGarmentCard(_ garment: DetectedGarment) -> some View {
+        HStack(spacing: StyleSpacing.lg) {
+            // Cropped garment thumbnail
+            Image(uiImage: garment.thumbnail)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 80, height: 80)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                )
+
+            // Info
+            VStack(alignment: .leading, spacing: StyleSpacing.xs) {
+                HStack(spacing: StyleSpacing.sm) {
+                    Image(systemName: garment.type.icon)
+                        .font(.system(size: 14))
+                        .foregroundStyle(slotColor(for: garment.type))
+
+                    Text(garment.type.label)
+                        .font(StyleTypography.headline)
+                        .foregroundStyle(.white)
+                }
+
+                HStack(spacing: StyleSpacing.sm) {
+                    Text("\(Int(garment.confidence * 100))% confianza")
+                        .font(StyleTypography.captionMono)
+                        .foregroundStyle(garment.confidence > 0.5 ? .green : .yellow)
+
+                    if let color = garment.dominantColor {
+                        Circle()
+                            .fill(Color(hex: color))
+                            .frame(width: 12, height: 12)
+                            .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 0.5))
+                    }
+                }
+
+                // Tags
+                HStack(spacing: 4) {
+                    ForEach(garment.styleTags, id: \.self) { tag in
+                        Text(tag)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(StyleColors.textSecondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.white.opacity(0.06), in: Capsule())
+                    }
+                }
+            }
+
+            Spacer()
+
+            // Saved indicator
+            Image(systemName: garment.saved ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 20))
+                .foregroundStyle(garment.saved ? .green : StyleColors.textTertiary)
+        }
+        .padding(StyleSpacing.md)
+        .glassCard()
+    }
+
+    // MARK: - Helpers
 
     private func tipRow(icon: String, text: String) -> some View {
         HStack(spacing: StyleSpacing.sm) {
@@ -191,429 +374,163 @@ struct ScannerView: View {
         }
     }
 
-    // MARK: - Classification Section
-
-    private var classificationSection: some View {
-        VStack(spacing: StyleSpacing.xl) {
-            // Image preview
-            if let image = capturedImage {
-                ZStack(alignment: .topTrailing) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 20))
-                        .shadow(color: .black.opacity(0.4), radius: 15, y: 8)
-                        .frame(maxHeight: 300)
-
-                    // Retake button
-                    Button {
-                        withAnimation(StyleAnimation.springSnappy) {
-                            capturedImage = nil
-                            photoPickerItem = nil
-                        }
-                    } label: {
-                        Image(systemName: "arrow.triangle.2.circlepath.camera")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(10)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
-                    .padding(12)
-                }
-            }
-
-            // AI Classification Badge
-            if isClassifying {
-                HStack(spacing: StyleSpacing.sm) {
-                    ProgressView()
-                        .tint(StyleColors.accentMint)
-                    Text("Analizando con Vision AI...")
-                        .font(StyleTypography.caption)
-                        .foregroundStyle(StyleColors.accentMint)
-                }
-                .padding(StyleSpacing.md)
-                .glassCard(cornerRadius: 12)
-            } else if aiConfidence > 0 {
-                HStack(spacing: StyleSpacing.sm) {
-                    Image(systemName: "brain.head.profile")
-                        .font(.system(size: 14))
-                        .foregroundStyle(StyleColors.accentMint)
-
-                    Text("IA: \(selectedType.label)")
-                        .font(StyleTypography.caption)
-                        .foregroundStyle(.white)
-
-                    Text("\(Int(aiConfidence * 100))% confianza")
-                        .font(StyleTypography.captionMono)
-                        .foregroundStyle(aiConfidence > 0.5 ? .green : .yellow)
-
-                    if let hex = dominantColorHex {
-                        Circle()
-                            .fill(Color(hex: hex))
-                            .frame(width: 14, height: 14)
-                            .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 0.5))
-                    }
-                }
-                .padding(StyleSpacing.md)
-                .glassCard(cornerRadius: 12)
-            }
-
-            // Classification form
-            VStack(spacing: StyleSpacing.lg) {
-                // Name field
-                VStack(alignment: .leading, spacing: StyleSpacing.xs) {
-                    Text("Nombre de la Prenda")
-                        .font(StyleTypography.caption)
-                        .foregroundStyle(StyleColors.textSecondary)
-
-                    TextField("Ej: Camiseta Azul", text: $garmentName)
-                        .font(StyleTypography.body)
-                        .foregroundStyle(.white)
-                        .padding(StyleSpacing.md)
-                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-                        .autocorrectionDisabled()
-                }
-
-                // Type picker
-                VStack(alignment: .leading, spacing: StyleSpacing.xs) {
-                    Text("Tipo de Prenda")
-                        .font(StyleTypography.caption)
-                        .foregroundStyle(StyleColors.textSecondary)
-
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: StyleSpacing.sm) {
-                            ForEach(GarmentType.allCases) { type in
-                                typeChip(type)
-                            }
-                        }
-                    }
-                }
-
-                // Thermal slider
-                VStack(alignment: .leading, spacing: StyleSpacing.xs) {
-                    HStack {
-                        Text("Índice Térmico")
-                            .font(StyleTypography.caption)
-                            .foregroundStyle(StyleColors.textSecondary)
-
-                        Spacer()
-
-                        Text(thermalLabel)
-                            .font(StyleTypography.caption)
-                            .foregroundStyle(thermalColor)
-                    }
-
-                    HStack(spacing: StyleSpacing.sm) {
-                        Image(systemName: "snowflake")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.blue)
-
-                        Slider(value: $thermalIndex, in: 0...1, step: 0.05)
-                            .tint(thermalColor)
-
-                        Image(systemName: "sun.max.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.orange)
-                    }
-                }
-
-                // Style tags
-                VStack(alignment: .leading, spacing: StyleSpacing.xs) {
-                    Text("Estilo")
-                        .font(StyleTypography.caption)
-                        .foregroundStyle(StyleColors.textSecondary)
-
-                    FlowLayout(spacing: 8) {
-                        ForEach(availableTags, id: \.self) { tag in
-                            tagChip(tag)
-                        }
-                    }
-                }
-
-                // Material field
-                VStack(alignment: .leading, spacing: StyleSpacing.xs) {
-                    Text("Material (opcional)")
-                        .font(StyleTypography.caption)
-                        .foregroundStyle(StyleColors.textSecondary)
-
-                    TextField("Ej: Algodón, Denim, Poliéster", text: $material)
-                        .font(StyleTypography.body)
-                        .foregroundStyle(.white)
-                        .padding(StyleSpacing.md)
-                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-                        .autocorrectionDisabled()
-                }
-            }
-            .padding(StyleSpacing.lg)
-            .glassCard()
-
-            // Save button
-            Button {
-                saveGarment()
-            } label: {
-                HStack(spacing: StyleSpacing.sm) {
-                    if isSaving {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "checkmark.circle.fill")
-                    }
-                    Text(isSaving ? "Guardando..." : "Guardar en Armario")
-                        .font(StyleTypography.headline)
-                }
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, StyleSpacing.lg)
-                .background(
-                    canSave
-                        ? AnyShapeStyle(StyleColors.brandGradient)
-                        : AnyShapeStyle(Color.gray.opacity(0.3)),
-                    in: RoundedRectangle(cornerRadius: StyleSpacing.buttonCornerRadius)
-                )
-            }
-            .disabled(!canSave || isSaving)
-        }
-    }
-
-    // MARK: - Components
-
-    private func typeChip(_ type: GarmentType) -> some View {
-        let isActive = selectedType == type
-        return Button {
-            withAnimation(StyleAnimation.springSnappy) {
-                selectedType = type
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: type.icon)
-                    .font(.system(size: 11))
-                Text(type.label)
-                    .font(StyleTypography.caption)
-            }
-            .foregroundStyle(isActive ? .white : StyleColors.textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                isActive
-                    ? AnyShapeStyle(StyleColors.primaryMid.opacity(0.6))
-                    : AnyShapeStyle(Color.white.opacity(0.06)),
-                in: Capsule()
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func tagChip(_ tag: String) -> some View {
-        let isActive = selectedTags.contains(tag)
-        return Button {
-            withAnimation(StyleAnimation.springSnappy) {
-                if isActive {
-                    selectedTags.remove(tag)
-                } else {
-                    selectedTags.insert(tag)
-                }
-            }
-        } label: {
-            Text(tag)
-                .font(StyleTypography.caption)
-                .foregroundStyle(isActive ? .white : StyleColors.textSecondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    isActive
-                        ? AnyShapeStyle(StyleColors.accentRose.opacity(0.5))
-                        : AnyShapeStyle(Color.white.opacity(0.06)),
-                    in: Capsule()
-                )
-        }
-        .buttonStyle(.plain)
-    }
-
     private var savedToast: some View {
         VStack {
             Spacer()
             HStack(spacing: StyleSpacing.sm) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
-                Text("¡Prenda guardada!")
-                    .font(StyleTypography.headline)
+                Text("\(savedCount) prenda\(savedCount == 1 ? "" : "s") guardada\(savedCount == 1 ? "" : "s") en tu armario")
+                    .font(StyleTypography.subheadline)
                     .foregroundStyle(.white)
             }
-            .padding(.horizontal, StyleSpacing.xl)
-            .padding(.vertical, StyleSpacing.md)
-            .glassCard(cornerRadius: StyleSpacing.pillCornerRadius)
-            .padding(.bottom, 80)
+            .padding(StyleSpacing.lg)
+            .background(.ultraThinMaterial, in: Capsule())
+            .padding(.bottom, 40)
         }
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
-    // MARK: - Computed
-
-    private var canSave: Bool {
-        capturedImage != nil && !garmentName.trimmingCharacters(in: .whitespaces).isEmpty
-    }
-
-    private var thermalLabel: String {
-        switch thermalIndex {
-        case ..<0.25:     return "Frío"
-        case 0.25..<0.50: return "Templado"
-        case 0.50..<0.75: return "Cálido"
-        default:          return "Caluroso"
+    private func slotColor(for type: GarmentType) -> Color {
+        switch type {
+        case .top:       return StyleColors.primaryMid
+        case .bottom:    return StyleColors.accentRose
+        case .shoes:     return StyleColors.accentGold
+        case .outerwear: return StyleColors.info
+        default:         return StyleColors.accentMint
         }
     }
 
-    private var thermalColor: Color {
-        switch thermalIndex {
-        case ..<0.25:     return .blue
-        case 0.25..<0.50: return .green
-        case 0.50..<0.75: return .orange
-        default:          return .red
-        }
-    }
-
-    // MARK: - Actions
+    // MARK: - AI Auto-Detect Pipeline
 
     private func loadFromPicker(_ item: PhotosPickerItem?) async {
         guard let item else { return }
-        if let data = try? await item.loadTransferable(type: Data.self),
-           let image = UIImage(data: data) {
-            capturedImage = image
-            DebugLogger.shared.log("📷 Scanner: Photo loaded from gallery", level: .info)
+        do {
+            if let data = try await item.loadTransferable(type: Data.self),
+               let image = UIImage(data: data) {
+                capturedImage = image
+            }
+        } catch {
+            DebugLogger.shared.log("❌ Scanner: Photo load failed: \(error.localizedDescription)", level: .error)
         }
     }
 
-    /// Runs Vision AI classification on a captured garment photo.
-    /// Auto-fills type, thermal index, tags, and dominant color.
-    private func classifyWithAI(_ image: UIImage) async {
-        isClassifying = true
-        DebugLogger.shared.log("🧠 Scanner: Running AI classification...", level: .info)
+    /// Main auto-detection pipeline: classify → crop → save for each valid type
+    private func autoDetectAndSave(_ image: UIImage) async {
+        isProcessing = true
+        scanComplete = false
+        detectedGarments = []
+        DebugLogger.shared.log("🔍 Scanner: Starting auto-detect pipeline...", level: .info)
 
-        if let classification = await VisionAIService.shared.classifyGarment(image) {
-            withAnimation(StyleAnimation.springSmooth) {
-                selectedType = classification.suggestedType
-                thermalIndex = classification.suggestedThermalIndex
-                aiConfidence = classification.confidence
+        let visionAI = VisionAIService.shared
 
-                // Auto-select suggested tags
-                for tag in classification.suggestedTags {
-                    if availableTags.contains(tag) {
-                        selectedTags.insert(tag)
-                    }
-                }
+        // Step 1: Classify the image to detect what type of garment it is
+        let classification = await visionAI.classifyGarment(image)
+
+        // Step 2: Determine which garment types to extract
+        // For a full-body photo, we try to extract all 3 regions
+        // For a close-up garment photo, we extract just the detected type
+        let typesToExtract: [GarmentType]
+
+        if let classification {
+            let detected = classification.suggestedType
+
+            // If it's a full-body photo or generic, extract all 3 slots
+            if detected == .fullBody || detected == .accessory {
+                typesToExtract = [.top, .bottom, .shoes]
+            } else {
+                // Single garment detected — just crop that region
+                typesToExtract = [detected]
+            }
+        } else {
+            // No classification → assume full outfit, extract all 3
+            typesToExtract = [.top, .bottom, .shoes]
+        }
+
+        // Step 3: For each type, crop + create garment
+        for type in typesToExtract {
+            let cropped = visionAI.cropGarmentRegion(from: image, type: type)
+            let thumbnail = visionAI.generateThumbnail(from: cropped)
+
+            // Classify the cropped region for better accuracy
+            let regionClass = await visionAI.classifyGarment(cropped)
+            let thermalIndex = regionClass?.suggestedThermalIndex ?? 0.5
+            let tags = regionClass?.suggestedTags ?? ["Casual"]
+            let confidence = regionClass?.confidence ?? (classification?.confidence ?? 0.3)
+
+            // Extract dominant color
+            var dominantHex: String?
+            if let color = visionAI.extractDominantColor(from: cropped) {
+                dominantHex = color.hexString
             }
 
-            DebugLogger.shared.log("✅ Scanner: AI classified as \(classification.suggestedType.label) (\(Int(classification.confidence * 100))%)", level: .success)
-        } else {
-            DebugLogger.shared.log("⚠️ Scanner: AI classification returned no results", level: .warning)
+            let detected = DetectedGarment(
+                type: type,
+                croppedImage: cropped,
+                thumbnail: thumbnail,
+                confidence: confidence,
+                thermalIndex: thermalIndex,
+                styleTags: tags,
+                dominantColor: dominantHex,
+                saved: false
+            )
+
+            detectedGarments.append(detected)
         }
 
-        // Extract dominant color
-        if let color = VisionAIService.shared.extractDominantColor(from: image) {
-            dominantColorHex = color.hexString
+        // Step 4: Auto-save all detected garments to SwiftData
+        var saved = 0
+        for i in detectedGarments.indices {
+            let garment = detectedGarments[i]
+
+            guard let imageData = garment.croppedImage.jpegData(compressionQuality: 0.85),
+                  let thumbData = garment.thumbnail.jpegData(compressionQuality: 0.6) else { continue }
+
+            let item = WardrobeItem(
+                imageData: imageData,
+                type: garment.type,
+                thermalIndex: garment.thermalIndex,
+                styleTags: garment.styleTags,
+                dominantColor: garment.dominantColor
+            )
+            item.thumbnailData = thumbData
+
+            modelContext.insert(item)
+            detectedGarments[i].saved = true
+            saved += 1
         }
-
-        isClassifying = false
-    }
-
-    private func saveGarment() {
-        guard let image = capturedImage,
-              let imageData = image.jpegData(compressionQuality: 0.85) else { return }
-
-        isSaving = true
-        DebugLogger.shared.log("💾 Saving garment: \(garmentName)", level: .info)
-
-        // Create thumbnail
-        let thumbnailSize = CGSize(width: 256, height: 256)
-        let renderer = UIGraphicsImageRenderer(size: thumbnailSize)
-        let thumbnail = renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: thumbnailSize))
-        }
-
-        // Map GarmentType to slot
-        let garmentType: GarmentType = selectedType
-
-        let item = WardrobeItem(
-            imageData: imageData,
-            type: garmentType,
-            thermalIndex: thermalIndex,
-            styleTags: Array(selectedTags),
-            material: material.isEmpty ? nil : material
-        )
-        item.thumbnailData = thumbnail.jpegData(compressionQuality: 0.6)
-
-        modelContext.insert(item)
 
         do {
             try modelContext.save()
-            DebugLogger.shared.log("✅ Garment saved: \(garmentName) (\(garmentType.label))", level: .success)
+            DebugLogger.shared.log("✅ Scanner: Auto-saved \(saved) garments", level: .success)
         } catch {
-            DebugLogger.shared.log("❌ Save failed: \(error.localizedDescription)", level: .error)
+            DebugLogger.shared.log("❌ Scanner: Save failed: \(error.localizedDescription)", level: .error)
         }
 
-        isSaving = false
+        savedCount = saved
+        isProcessing = false
+        scanComplete = true
 
+        // Show toast
         withAnimation(StyleAnimation.springSmooth) {
             showSavedToast = true
         }
-
         Task {
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .seconds(3))
             withAnimation(StyleAnimation.springSmooth) {
                 showSavedToast = false
             }
-            try? await Task.sleep(for: .seconds(0.5))
-            // Reset for next scan
+        }
+    }
+
+    private func resetScanner() {
+        withAnimation(StyleAnimation.springSnappy) {
             capturedImage = nil
             photoPickerItem = nil
-            garmentName = ""
-            selectedType = .top
-            thermalIndex = 0.5
-            selectedTags = []
-            material = ""
+            detectedGarments = []
+            scanComplete = false
+            savedCount = 0
         }
-    }
-}
-
-// MARK: - Flow Layout
-
-/// Simple flow layout for wrapping tag chips.
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 8
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let result = layoutSubviews(proposal: proposal, subviews: subviews)
-        return result.size
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = layoutSubviews(proposal: proposal, subviews: subviews)
-        for (index, position) in result.positions.enumerated() {
-            subviews[index].place(at: CGPoint(x: bounds.minX + position.x, y: bounds.minY + position.y), proposal: .unspecified)
-        }
-    }
-
-    private func layoutSubviews(proposal: ProposedViewSize, subviews: Subviews) -> (size: CGSize, positions: [CGPoint]) {
-        let maxWidth = proposal.width ?? .infinity
-        var positions: [CGPoint] = []
-        var currentX: CGFloat = 0
-        var currentY: CGFloat = 0
-        var lineHeight: CGFloat = 0
-        var maxX: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if currentX + size.width > maxWidth && currentX > 0 {
-                currentX = 0
-                currentY += lineHeight + spacing
-                lineHeight = 0
-            }
-            positions.append(CGPoint(x: currentX, y: currentY))
-            lineHeight = max(lineHeight, size.height)
-            currentX += size.width + spacing
-            maxX = max(maxX, currentX)
-        }
-
-        return (CGSize(width: maxX, height: currentY + lineHeight), positions)
     }
 }
 
@@ -655,4 +572,13 @@ struct ImagePickerView: UIViewControllerRepresentable {
             picker.dismiss(animated: true)
         }
     }
+}
+
+// MARK: - Preview
+
+#Preview {
+    NavigationStack {
+        ScannerView()
+    }
+    .preferredColorScheme(.dark)
 }

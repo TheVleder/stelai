@@ -28,12 +28,12 @@ enum TryOnState: Equatable, Sendable {
 
 /// Current outfit configuration: one garment per slot.
 struct OutfitSelection: Equatable, Sendable {
-    var top: SampleGarment?
-    var bottom: SampleGarment?
-    var shoes: SampleGarment?
+    var top: CarouselGarment?
+    var bottom: CarouselGarment?
+    var shoes: CarouselGarment?
 
     /// Returns the garment for the given slot.
-    func garment(for slot: GarmentSlot) -> SampleGarment? {
+    func garment(for slot: GarmentSlot) -> CarouselGarment? {
         switch slot {
         case .top:    return top
         case .bottom: return bottom
@@ -42,7 +42,7 @@ struct OutfitSelection: Equatable, Sendable {
     }
 
     /// Sets the garment for the given slot.
-    mutating func setGarment(_ garment: SampleGarment?, for slot: GarmentSlot) {
+    mutating func setGarment(_ garment: CarouselGarment?, for slot: GarmentSlot) {
         switch slot {
         case .top:    top = garment
         case .bottom: bottom = garment
@@ -237,20 +237,15 @@ final class TryOnEngine {
         var parts: [String] = ["person wearing"]
 
         if let top = outfit.top {
-            let color = top.colorName.lowercased()
-            let style = top.styleTags.joined(separator: ", ")
-            parts.append("\(color) \(top.name.lowercased())")
-            if !style.isEmpty { parts.append("(\(style))") }
+            parts.append(top.name.lowercased())
         }
 
         if let bottom = outfit.bottom {
-            let color = bottom.colorName.lowercased()
-            parts.append("with \(color) \(bottom.name.lowercased())")
+            parts.append("with \(bottom.name.lowercased())")
         }
 
         if let shoes = outfit.shoes {
-            let color = shoes.colorName.lowercased()
-            parts.append("and \(color) \(shoes.name.lowercased())")
+            parts.append("and \(shoes.name.lowercased())")
         }
 
         parts.append(", professional fashion photo, studio lighting, high quality, detailed clothing texture")

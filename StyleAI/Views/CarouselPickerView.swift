@@ -2,32 +2,92 @@
 // StyleAI — Horizontal Garment Carousel
 //
 // Reusable snap-scrolling carousel for selecting garments within a slot.
-// Shows garment cards with gradient thumbnails, name, and thermal badge.
+// Shows REAL wardrobe items (from SwiftData) with photo thumbnails,
+// plus sample garments as fallbacks when the wardrobe is empty.
 // Selected item scales up with a glowing border.
 
 import SwiftUI
 
+// MARK: - Carousel Item Protocol
+
+/// Unifies WardrobeItem and SampleGarment for carousel display.
+struct CarouselGarment: Identifiable, Hashable {
+    let id: UUID
+    let name: String
+    let slot: GarmentSlot
+    let thermalIndex: Double
+    let thumbnailImage: UIImage?         // Real photo (from wardrobe)
+    let gradientColors: [Color]          // Fallback gradient (from samples)
+    let icon: String
+    let isFromWardrobe: Bool
+
+    /// Create from a WardrobeItem
+    static func fromWardrobe(_ item: WardrobeItem) -> CarouselGarment {
+        let slot: GarmentSlot
+        switch item.type {
+        case .top, .outerwear: slot = .top
+        case .bottom:          slot = .bottom
+        case .shoes:           slot = .shoes
+        default:               slot = .top
+        }
+
+        var thumbnail: UIImage?
+        if let data = item.thumbnailData {
+            thumbnail = UIImage(data: data)
+        } else {
+            thumbnail = UIImage(data: item.imageData)
+        }
+
+        return CarouselGarment(
+            id: item.id,
+            name: item.type.label,
+            slot: slot,
+            thermalIndex: item.thermalIndex,
+            thumbnailImage: thumbnail,
+            gradientColors: [],
+            icon: item.type.icon,
+            isFromWardrobe: true
+        )
+    }
+
+    /// Create from a SampleGarment
+    static func fromSample(_ sample: SampleGarment) -> CarouselGarment {
+        CarouselGarment(
+            id: sample.id,
+            name: sample.name,
+            slot: sample.slot,
+            thermalIndex: sample.thermalIndex,
+            thumbnailImage: nil,
+            gradientColors: sample.gradientColors,
+            icon: sample.icon,
+            isFromWardrobe: false
+        )
+    }
+
+    var thermalLabel: String {
+        switch thermalIndex {
+        case ..<0.25:     return "Frío"
+        case 0.25..<0.50: return "Templado"
+        case 0.50..<0.75: return "Cálido"
+        default:          return "Caluroso"
+        }
+    }
+
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    static func == (lhs: CarouselGarment, rhs: CarouselGarment) -> Bool { lhs.id == rhs.id }
+}
+
 // MARK: - Carousel Picker
 
-/// A horizontal snap carousel for choosing a garment from a specific slot.
-///
-/// Usage:
-/// ```swift
-/// CarouselPickerView(
-///     slot: .top,
-///     garments: SampleGarments.allTops,
-///     selection: $selectedTop
-/// )
-/// ```
 struct CarouselPickerView: View {
 
     let slot: GarmentSlot
-    let garments: [SampleGarment]
-    @Binding var selection: SampleGarment?
+    let garments: [CarouselGarment]
+    @Binding var selection: CarouselGarment?
 
     // Internal animation state
     @Namespace private var selectionNamespace
-    @State private var scrollPosition: SampleGarment.ID?
+    @State private var scrollPosition: CarouselGarment.ID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: StyleSpacing.sm) {
@@ -118,41 +178,53 @@ struct CarouselPickerView: View {
 
     // MARK: - Garment Card
 
-    private func garmentCard(_ garment: SampleGarment) -> some View {
+    private func garmentCard(_ garment: CarouselGarment) -> some View {
         let isSelected = selection?.id == garment.id
 
         return Button {
             withAnimation(StyleAnimation.springSnappy) {
                 selection = garment
             }
-            // Haptic feedback
             let impact = UIImpactFeedbackGenerator(style: .light)
             impact.impactOccurred()
         } label: {
             VStack(spacing: StyleSpacing.sm) {
                 // Garment thumbnail
                 ZStack {
-                    // Gradient representation of the garment
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(
-                            LinearGradient(
-                                colors: garment.gradientColors,
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
+                    if let photo = garment.thumbnailImage {
+                        // REAL photo from wardrobe
+                        Image(uiImage: photo)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 80, height: 80)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .shadow(
+                                color: slot.accentColor.opacity(isSelected ? 0.4 : 0.1),
+                                radius: isSelected ? 12 : 4,
+                                y: isSelected ? 4 : 2
                             )
-                        )
-                        .frame(width: 80, height: 80)
-                        .shadow(
-                            color: garment.gradientColors.first?.opacity(0.3) ?? .clear,
-                            radius: isSelected ? 12 : 4,
-                            y: isSelected ? 4 : 2
-                        )
+                    } else {
+                        // Sample garment gradient fallback
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(
+                                LinearGradient(
+                                    colors: garment.gradientColors,
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 80, height: 80)
+                            .shadow(
+                                color: garment.gradientColors.first?.opacity(0.3) ?? .clear,
+                                radius: isSelected ? 12 : 4,
+                                y: isSelected ? 4 : 2
+                            )
 
-                    // Garment icon overlay
-                    Image(systemName: garment.icon)
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.7))
-                        .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
+                        Image(systemName: garment.icon)
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
+                    }
 
                     // Thermal badge
                     VStack {
@@ -172,6 +244,23 @@ struct CarouselPickerView: View {
                     }
                     .frame(width: 80, height: 80)
                     .padding(4)
+
+                    // Wardrobe badge
+                    if garment.isFromWardrobe {
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Image(systemName: "person.crop.square.filled.and.at.rectangle")
+                                    .font(.system(size: 7))
+                                    .foregroundStyle(.white)
+                                    .padding(3)
+                                    .background(StyleColors.accentMint.opacity(0.8), in: Circle())
+                                Spacer()
+                            }
+                        }
+                        .frame(width: 80, height: 80)
+                        .padding(4)
+                    }
                 }
 
                 // Name
@@ -224,20 +313,20 @@ struct CarouselPickerView: View {
         VStack(spacing: 24) {
             CarouselPickerView(
                 slot: .top,
-                garments: SampleGarments.allTops,
-                selection: .constant(SampleGarments.whiteTee)
+                garments: SampleGarments.allTops.map { CarouselGarment.fromSample($0) },
+                selection: .constant(nil)
             )
 
             CarouselPickerView(
                 slot: .bottom,
-                garments: SampleGarments.allBottoms,
+                garments: SampleGarments.allBottoms.map { CarouselGarment.fromSample($0) },
                 selection: .constant(nil)
             )
 
             CarouselPickerView(
                 slot: .shoes,
-                garments: SampleGarments.allShoes,
-                selection: .constant(SampleGarments.whiteSneakers)
+                garments: SampleGarments.allShoes.map { CarouselGarment.fromSample($0) },
+                selection: .constant(nil)
             )
         }
     }
