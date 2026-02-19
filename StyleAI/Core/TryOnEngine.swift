@@ -357,75 +357,45 @@ final class TryOnEngine {
                     height: size.height * (zone.upperBound - zone.lowerBound)
                 )
 
-                // === Layer 1: Drop Shadow ===
-                cgContext.saveGState()
-                let shadowRect = garmentRect.offsetBy(dx: 3, dy: 5)
-                cgContext.setFillColor(UIColor.black.withAlphaComponent(0.12).cgColor)
-                UIBezierPath(
-                    roundedRect: shadowRect,
-                    cornerRadius: garmentRect.width * 0.06
-                ).fill()
-                cgContext.restoreGState()
-
-                // === Layer 2: Clip to Body Mask (Real AI) ===
+                // === Layer 1: Clip to Body Mask (Real AI) ===
                 cgContext.saveGState()
 
                 if let mask = personMask {
-                    // Clip to person silhouette within this garment zone.
-                    // The mask covers the full image; we intersect with the zone rect.
                     cgContext.clip(to: garmentRect, mask: mask)
                 } else {
-                    // Fallback: clip to rounded rectangle
                     let cornerRadius = garmentRect.width * 0.06
                     let clipPath = UIBezierPath(roundedRect: garmentRect, cornerRadius: cornerRadius)
                     clipPath.addClip()
                 }
 
-                // === Layer 3: Gradient Fill (Multiply blend) ===
-                let colors = garment.gradientColors.map { UIColor($0).cgColor } as CFArray
-                if let gradient = CGGradient(
-                    colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                    colors: colors,
-                    locations: [0.0, 1.0]
-                ) {
-                    cgContext.setBlendMode(.multiply)
-                    cgContext.setAlpha(0.55)
-                    cgContext.drawLinearGradient(
-                        gradient,
-                        start: CGPoint(x: garmentRect.minX, y: garmentRect.minY),
-                        end: CGPoint(x: garmentRect.maxX, y: garmentRect.maxY),
-                        options: []
-                    )
+                // === Layer 2: Garment Image or Gradient ===
+                if garment.isFromWardrobe, let thumb = garment.thumbnailImage {
+                    // Real wardrobe garment — draw the actual photo
+                    cgContext.setBlendMode(.normal)
+                    cgContext.setAlpha(0.80)
+                    thumb.draw(in: garmentRect)
+                } else {
+                    // Sample garment — subtle color tint only
+                    let colors = garment.gradientColors.map { UIColor($0).cgColor } as CFArray
+                    if let gradient = CGGradient(
+                        colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                        colors: colors,
+                        locations: [0.0, 1.0]
+                    ) {
+                        cgContext.setBlendMode(.multiply)
+                        cgContext.setAlpha(0.30)
+                        cgContext.drawLinearGradient(
+                            gradient,
+                            start: CGPoint(x: garmentRect.minX, y: garmentRect.minY),
+                            end: CGPoint(x: garmentRect.maxX, y: garmentRect.maxY),
+                            options: []
+                        )
+                    }
                 }
 
-                // === Layer 4: Fabric Texture Pattern ===
+                // === Layer 3: Body Curvature (Radial shading) ===
                 cgContext.setBlendMode(.softLight)
-                cgContext.setAlpha(0.25)
-                drawFabricTexture(in: cgContext, rect: garmentRect, slot: slot)
-
-                // === Layer 5: Directional Light (Top-left source) ===
-                cgContext.setBlendMode(.overlay)
                 cgContext.setAlpha(0.20)
-                if let lightGrad = CGGradient(
-                    colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                    colors: [
-                        UIColor.white.withAlphaComponent(0.3).cgColor,
-                        UIColor.clear.cgColor,
-                        UIColor.black.withAlphaComponent(0.15).cgColor
-                    ] as CFArray,
-                    locations: [0.0, 0.5, 1.0]
-                ) {
-                    cgContext.drawLinearGradient(
-                        lightGrad,
-                        start: CGPoint(x: garmentRect.minX, y: garmentRect.minY),
-                        end: CGPoint(x: garmentRect.maxX, y: garmentRect.maxY),
-                        options: []
-                    )
-                }
-
-                // === Layer 6: Body Curvature (Radial shading) ===
-                cgContext.setBlendMode(.softLight)
-                cgContext.setAlpha(0.30)
                 if let bodyGrad = CGGradient(
                     colorsSpace: CGColorSpaceCreateDeviceRGB(),
                     colors: [
@@ -444,16 +414,6 @@ final class TryOnEngine {
                         options: []
                     )
                 }
-
-                // === Layer 7: Seam / Edge Highlight ===
-                cgContext.setBlendMode(.normal)
-                cgContext.setStrokeColor(UIColor.white.withAlphaComponent(0.08).cgColor)
-                cgContext.setLineWidth(1.0)
-                let seamCorner = garmentRect.width * 0.06
-                UIBezierPath(
-                    roundedRect: garmentRect.insetBy(dx: 2, dy: 2),
-                    cornerRadius: max(seamCorner - 2, 0)
-                ).stroke()
 
                 cgContext.restoreGState()
             }

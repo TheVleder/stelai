@@ -42,6 +42,9 @@ struct TryOnView: View {
     @State private var showSavedFeedback = false
     @State private var photoScale: CGFloat = 1.0
     @State private var isDownloadingSD = false
+    @State private var processingRotation: Double = 0
+    @State private var processingPulse = false
+    @State private var processingDotIndex = 0
 
     @Environment(\.dismiss) private var dismiss
 
@@ -331,30 +334,87 @@ struct TryOnView: View {
 
     private var processingOverlay: some View {
         ZStack {
-            Color.black.opacity(0.3)
+            Color.black.opacity(0.4)
                 .ignoresSafeArea()
 
             VStack(spacing: StyleSpacing.lg) {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .tint(.white)
-                    .scaleEffect(1.3)
+                // Animated clothing icon with pulsing ring
+                ZStack {
+                    // Outer pulsing ring
+                    Circle()
+                        .stroke(
+                            AngularGradient(
+                                colors: [
+                                    StyleColors.primaryLight,
+                                    StyleColors.primaryMid,
+                                    StyleColors.primaryDark,
+                                    StyleColors.primaryLight
+                                ],
+                                center: .center
+                            ),
+                            lineWidth: 3
+                        )
+                        .frame(width: 70, height: 70)
+                        .rotationEffect(.degrees(processingRotation))
+
+                    // Inner glow
+                    Circle()
+                        .fill(StyleColors.brandGradient.opacity(0.15))
+                        .frame(width: 60, height: 60)
+                        .scaleEffect(processingPulse ? 1.1 : 0.9)
+
+                    // Clothing icon
+                    Image(systemName: "tshirt.fill")
+                        .font(.system(size: 24, weight: .medium))
+                        .foregroundStyle(StyleColors.brandGradient)
+                        .scaleEffect(processingPulse ? 1.05 : 0.95)
+                }
 
                 VStack(spacing: StyleSpacing.xs) {
                     Text("Aplicando prendas...")
                         .font(StyleTypography.headline)
                         .foregroundStyle(.white)
 
-                    Text("Preview rápido")
-                        .font(StyleTypography.caption)
-                        .foregroundStyle(StyleColors.textSecondary)
+                    // Shimmer dots animation
+                    HStack(spacing: 4) {
+                        ForEach(0..<3, id: \.self) { i in
+                            Circle()
+                                .fill(.white)
+                                .frame(width: 5, height: 5)
+                                .opacity(processingDotIndex == i ? 1.0 : 0.3)
+                        }
+                    }
                 }
             }
             .padding(StyleSpacing.xxl)
             .glassCard(cornerRadius: 20)
         }
         .transition(.opacity)
-        .animation(StyleAnimation.fadeIn, value: engine.state.isProcessing)
+        .onAppear {
+            withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                processingRotation = 360
+            }
+            withAnimation(.easeInOut(duration: 0.8).repeatForever()) {
+                processingPulse = true
+            }
+            startDotAnimation()
+        }
+        .onDisappear {
+            processingRotation = 0
+            processingPulse = false
+            processingDotIndex = 0
+        }
+    }
+
+    /// Cycles the dot index for the shimmer dots animation.
+    private func startDotAnimation() {
+        Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { timer in
+            if !engine.state.isProcessing {
+                timer.invalidate()
+                return
+            }
+            processingDotIndex = (processingDotIndex + 1) % 3
+        }
     }
 
     // MARK: - AI Generation Overlay
