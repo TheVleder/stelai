@@ -38,6 +38,8 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Style AI necesita acceso a tus fotos para el Probador Virtual."
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "Style AI necesita permiso para guardar los looks generados."
+        INFOPLIST_KEY_NSCameraUsageDescription: "Style AI necesita la cámara para escanear prendas."
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Style AI usa tu ubicación para obtener el clima y recomendarte outfits."
         INFOPLIST_KEY_CFBundleDisplayName: "Style AI"
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_REQUIRED: false

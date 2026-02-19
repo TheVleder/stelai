@@ -311,33 +311,33 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
 
-                actionCard(
-                    icon: "camera.viewfinder",
-                    title: "Escanear Armario",
-                    subtitle: "Fotografía y cataloga tus prendas",
-                    gradient: LinearGradient(
-                        colors: [StyleColors.accentRose, StyleColors.accentGold],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+                NavigationLink(destination: ScannerView()) {
+                    actionCardLabel(
+                        icon: "camera.viewfinder",
+                        title: "Escanear Armario",
+                        subtitle: "Fotografía y cataloga tus prendas",
+                        gradient: LinearGradient(
+                            colors: [StyleColors.accentRose, StyleColors.accentGold],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                ) {
-                    DebugLogger.shared.log("📸 User tapped: Escanear Armario", level: .info)
-                    // TODO: Navigate to scanner view
                 }
+                .buttonStyle(.plain)
 
-                actionCard(
-                    icon: "cloud.sun.fill",
-                    title: "Estilista Meteorológico",
-                    subtitle: "Outfits inteligentes basados en el clima",
-                    gradient: LinearGradient(
-                        colors: [StyleColors.accentMint, StyleColors.info],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+                NavigationLink(destination: WeatherStylistView()) {
+                    actionCardLabel(
+                        icon: "cloud.sun.fill",
+                        title: "Estilista Meteorológico",
+                        subtitle: "Outfits inteligentes basados en el clima",
+                        gradient: LinearGradient(
+                            colors: [StyleColors.accentMint, StyleColors.info],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                ) {
-                    DebugLogger.shared.log("🌤 User tapped: Estilista Meteorológico", level: .info)
-                    // TODO: Navigate to weather stylist view
                 }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, StyleSpacing.lg)
 
