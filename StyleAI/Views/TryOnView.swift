@@ -18,6 +18,7 @@ struct TryOnView: View {
     // MARK: State
 
     @State private var engine = TryOnEngine.shared
+    @State private var sdService = StableDiffusionService.shared
 
     /// User's selected photo.
     @State private var userPhoto: UIImage?
@@ -36,6 +37,7 @@ struct TryOnView: View {
     /// Animation states
     @State private var showSavedFeedback = false
     @State private var photoScale: CGFloat = 1.0
+    @State private var isDownloadingSD = false
 
     @Environment(\.dismiss) private var dismiss
 
@@ -73,6 +75,16 @@ struct TryOnView: View {
             // Processing overlay
             if engine.state.isProcessing {
                 processingOverlay
+            }
+
+            // AI Generation overlay
+            if case .generatingAI = engine.state {
+                aiGenerationOverlay
+            }
+
+            // SD Download overlay
+            if isDownloadingSD {
+                sdDownloadOverlay
             }
 
             // Saved feedback
@@ -193,15 +205,57 @@ struct TryOnView: View {
                 .background(.ultraThinMaterial, in: Capsule())
             }
 
-            // Processing time badge
+            // AI Generation button
+            if currentOutfit.hasAnySelection && hasPhoto {
+                if sdService.state.isReady {
+                    // SD model ready — show "Generate with AI" button
+                    Button {
+                        triggerAIGeneration()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 11))
+                            Text("Generar con IA")
+                                .font(StyleTypography.caption)
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, StyleSpacing.md)
+                        .padding(.vertical, StyleSpacing.sm)
+                        .background(
+                            Capsule()
+                                .fill(StyleColors.brandGradient)
+                        )
+                    }
+                } else if !sdService.state.isDownloading {
+                    // SD model not downloaded — show download CTA
+                    Button {
+                        downloadSDModel()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.down.circle")
+                                .font(.system(size: 11))
+                            Text("Descargar IA (~2 GB)")
+                                .font(StyleTypography.caption)
+                        }
+                        .foregroundStyle(.white.opacity(0.8))
+                        .padding(.horizontal, StyleSpacing.md)
+                        .padding(.vertical, StyleSpacing.sm)
+                        .background(.ultraThinMaterial, in: Capsule())
+                    }
+                }
+            }
+
+            // Processing time / method badge
             if engine.lastProcessingTimeMs > 0 {
                 HStack(spacing: 4) {
-                    Image(systemName: "bolt.fill")
+                    Image(systemName: engine.usedStableDiffusion ? "sparkles" : "bolt.fill")
                         .font(.system(size: 9))
-                    Text("\(engine.lastProcessingTimeMs)ms")
+                    Text(engine.usedStableDiffusion
+                        ? "✨ IA · \(String(format: "%.1f", Double(engine.lastProcessingTimeMs) / 1000.0))s"
+                        : "\(engine.lastProcessingTimeMs)ms")
                         .font(StyleTypography.captionMono)
                 }
-                .foregroundStyle(StyleColors.accentMint)
+                .foregroundStyle(engine.usedStableDiffusion ? StyleColors.brandPink : StyleColors.accentMint)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(.ultraThinMaterial, in: Capsule())
@@ -257,7 +311,7 @@ struct TryOnView: View {
                         .font(StyleTypography.headline)
                         .foregroundStyle(.white)
 
-                    Text("Procesando con IA")
+                    Text("Preview rápido")
                         .font(StyleTypography.caption)
                         .foregroundStyle(StyleColors.textSecondary)
                 }
@@ -267,6 +321,88 @@ struct TryOnView: View {
         }
         .transition(.opacity)
         .animation(StyleAnimation.fadeIn, value: engine.state.isProcessing)
+    }
+
+    // MARK: - AI Generation Overlay
+
+    private var aiGenerationOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.5)
+                .ignoresSafeArea()
+
+            VStack(spacing: StyleSpacing.lg) {
+                // Sparkle animation
+                Image(systemName: "sparkles")
+                    .font(.system(size: 36))
+                    .foregroundStyle(StyleColors.brandGradient)
+                    .symbolEffect(.pulse, options: .repeating)
+
+                VStack(spacing: StyleSpacing.sm) {
+                    Text("Generando con IA")
+                        .font(StyleTypography.headline)
+                        .foregroundStyle(.white)
+
+                    Text("Stable Diffusion · on-device")
+                        .font(StyleTypography.caption)
+                        .foregroundStyle(StyleColors.textSecondary)
+                }
+
+                // Progress bar
+                VStack(spacing: StyleSpacing.xs) {
+                    ProgressView(value: sdService.generationProgress)
+                        .progressViewStyle(.linear)
+                        .tint(StyleColors.brandPink)
+
+                    Text("\(Int(sdService.generationProgress * 100))%")
+                        .font(StyleTypography.captionMono)
+                        .foregroundStyle(StyleColors.textSecondary)
+                }
+                .frame(width: 200)
+            }
+            .padding(StyleSpacing.xxl)
+            .glassCard(cornerRadius: 20)
+        }
+        .transition(.opacity)
+    }
+
+    // MARK: - SD Download Overlay
+
+    private var sdDownloadOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.5)
+                .ignoresSafeArea()
+
+            VStack(spacing: StyleSpacing.lg) {
+                Image(systemName: "arrow.down.circle")
+                    .font(.system(size: 36))
+                    .foregroundStyle(StyleColors.accentMint)
+                    .symbolEffect(.pulse, options: .repeating)
+
+                VStack(spacing: StyleSpacing.sm) {
+                    Text("Descargando Motor IA")
+                        .font(StyleTypography.headline)
+                        .foregroundStyle(.white)
+
+                    Text("Stable Diffusion · ~\(SDModelFile.totalSizeMB) MB")
+                        .font(StyleTypography.caption)
+                        .foregroundStyle(StyleColors.textSecondary)
+                }
+
+                VStack(spacing: StyleSpacing.xs) {
+                    ProgressView(value: sdService.downloadProgress)
+                        .progressViewStyle(.linear)
+                        .tint(StyleColors.accentMint)
+
+                    Text(sdService.state.displayText)
+                        .font(StyleTypography.captionMono)
+                        .foregroundStyle(StyleColors.textSecondary)
+                }
+                .frame(width: 200)
+            }
+            .padding(StyleSpacing.xxl)
+            .glassCard(cornerRadius: 20)
+        }
+        .transition(.opacity)
     }
 
     // MARK: - Saved Toast
@@ -359,7 +495,7 @@ struct TryOnView: View {
         }
     }
 
-    /// Trigger the VTO engine when a garment selection changes.
+    /// Trigger the VTO engine when a garment selection changes (fast preview).
     private func triggerTryOn() {
         guard let photo = userPhoto, currentOutfit.hasAnySelection else {
             compositeImage = nil
@@ -368,6 +504,24 @@ struct TryOnView: View {
 
         Task {
             compositeImage = await engine.applyOutfit(to: photo, outfit: currentOutfit)
+        }
+    }
+
+    /// Trigger AI generation using Stable Diffusion.
+    private func triggerAIGeneration() {
+        guard let photo = userPhoto, currentOutfit.hasAnySelection else { return }
+
+        Task {
+            compositeImage = await engine.generateWithAI(userPhoto: photo, outfit: currentOutfit)
+        }
+    }
+
+    /// Download the Stable Diffusion model.
+    private func downloadSDModel() {
+        isDownloadingSD = true
+        Task {
+            await ModelManager.shared.downloadSDModel()
+            isDownloadingSD = false
         }
     }
 

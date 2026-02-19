@@ -1,8 +1,9 @@
 // ScannerView.swift
-// StyleAI — Garment Scanner
+// StyleAI — AI-Powered Garment Scanner
 //
-// Captures garment photos via camera or photo library,
-// lets the user classify them, and saves to SwiftData.
+// Captures garment photos via camera or photo library.
+// Uses VisionAIService for automatic garment classification,
+// then lets the user verify and save to SwiftData.
 
 import SwiftUI
 import SwiftData
@@ -27,6 +28,11 @@ struct ScannerView: View {
     @State private var thermalIndex: Double = 0.5
     @State private var selectedTags: Set<String> = []
     @State private var material = ""
+
+    // AI classification
+    @State private var isClassifying = false
+    @State private var aiConfidence: Float = 0
+    @State private var dominantColorHex: String?
 
     // UI state
     @State private var isSaving = false
@@ -79,6 +85,11 @@ struct ScannerView: View {
         }
         .onChange(of: photoPickerItem) { _, newItem in
             Task { await loadFromPicker(newItem) }
+        }
+        .onChange(of: capturedImage) { _, newImage in
+            if let newImage {
+                Task { await classifyWithAI(newImage) }
+            }
         }
     }
 
@@ -209,6 +220,42 @@ struct ScannerView: View {
                     }
                     .padding(12)
                 }
+            }
+
+            // AI Classification Badge
+            if isClassifying {
+                HStack(spacing: StyleSpacing.sm) {
+                    ProgressView()
+                        .tint(StyleColors.accentMint)
+                    Text("Analizando con Vision AI...")
+                        .font(StyleTypography.caption)
+                        .foregroundStyle(StyleColors.accentMint)
+                }
+                .padding(StyleSpacing.md)
+                .glassCard(cornerRadius: 12)
+            } else if aiConfidence > 0 {
+                HStack(spacing: StyleSpacing.sm) {
+                    Image(systemName: "brain.head.profile")
+                        .font(.system(size: 14))
+                        .foregroundStyle(StyleColors.accentMint)
+
+                    Text("IA: \(selectedType.label)")
+                        .font(StyleTypography.caption)
+                        .foregroundStyle(.white)
+
+                    Text("\(Int(aiConfidence * 100))% confianza")
+                        .font(StyleTypography.captionMono)
+                        .foregroundStyle(aiConfidence > 0.5 ? .green : .yellow)
+
+                    if let hex = dominantColorHex {
+                        Circle()
+                            .fill(Color(hex: hex))
+                            .frame(width: 14, height: 14)
+                            .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 0.5))
+                    }
+                }
+                .padding(StyleSpacing.md)
+                .glassCard(cornerRadius: 12)
             }
 
             // Classification form
@@ -433,6 +480,39 @@ struct ScannerView: View {
             capturedImage = image
             DebugLogger.shared.log("📷 Scanner: Photo loaded from gallery", level: .info)
         }
+    }
+
+    /// Runs Vision AI classification on a captured garment photo.
+    /// Auto-fills type, thermal index, tags, and dominant color.
+    private func classifyWithAI(_ image: UIImage) async {
+        isClassifying = true
+        DebugLogger.shared.log("🧠 Scanner: Running AI classification...", level: .info)
+
+        if let classification = await VisionAIService.shared.classifyGarment(image) {
+            withAnimation(StyleAnimation.springSmooth) {
+                selectedType = classification.suggestedType
+                thermalIndex = classification.suggestedThermalIndex
+                aiConfidence = classification.confidence
+
+                // Auto-select suggested tags
+                for tag in classification.suggestedTags {
+                    if availableTags.contains(tag) {
+                        selectedTags.insert(tag)
+                    }
+                }
+            }
+
+            DebugLogger.shared.log("✅ Scanner: AI classified as \(classification.suggestedType.label) (\(Int(classification.confidence * 100))%)", level: .success)
+        } else {
+            DebugLogger.shared.log("⚠️ Scanner: AI classification returned no results", level: .warning)
+        }
+
+        // Extract dominant color
+        if let color = VisionAIService.shared.extractDominantColor(from: image) {
+            dominantColorHex = color.hexString
+        }
+
+        isClassifying = false
     }
 
     private func saveGarment() {

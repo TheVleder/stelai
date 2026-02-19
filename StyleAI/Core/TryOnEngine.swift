@@ -1,9 +1,9 @@
 // TryOnEngine.swift
 // StyleAI — Virtual Try-On Processing Pipeline
 //
-// Handles the AI-powered garment application onto the user's photo.
-// Phase 1: Visual simulation using compositing (no real ML models needed).
-// Phase 2: Will connect to CoreML Stable Diffusion / ControlNet pipeline.
+// Two rendering modes:
+// 1. Fast Preview: Vision AI segmentation + gradient overlays (~200ms)
+// 2. AI Generation: Stable Diffusion inpainting for photo-realistic results (~15s)
 
 import SwiftUI
 import UIKit
@@ -14,6 +14,7 @@ import UIKit
 enum TryOnState: Equatable, Sendable {
     case idle
     case processing
+    case generatingAI(progress: Double)
     case done
     case error(message: String)
 
@@ -62,13 +63,11 @@ struct OutfitSelection: Equatable, Sendable {
 
 // MARK: - Try-On Engine
 
-/// Processes Virtual Try-On compositing.
+/// Processes Virtual Try-On compositing using real Apple Vision AI.
 ///
-/// **Phase 1** (current): Creates a visual composite using colored overlays,
-/// blend modes, and transparency to simulate garment application.
-///
-/// **Phase 2** (future): Will use `ModelManager.shared.model(for: "vto_diffusion")`
-/// to run ControlNet-based diffusion inference on the Neural Engine.
+/// Uses `VNGeneratePersonSegmentationRequest` to create a pixel-accurate
+/// body mask, then composites garment overlays onto the detected silhouette.
+/// Garments follow actual body contours instead of rectangles.
 @MainActor
 @Observable
 final class TryOnEngine {
@@ -88,6 +87,9 @@ final class TryOnEngine {
     /// Processing time for the last operation (diagnostic).
     private(set) var lastProcessingTimeMs: Int = 0
 
+    /// Whether person segmentation was used (vs rectangle fallback).
+    private(set) var usedRealSegmentation = false
+
     private init() {}
 
     // MARK: - Public API
@@ -106,16 +108,27 @@ final class TryOnEngine {
         }
 
         state = .processing
-        DebugLogger.shared.log("👗 VTO: Processing outfit (\(outfit.count) garments)...", level: .info)
+        DebugLogger.shared.log("👗 VTO: Processing outfit (\(outfit.count) garments) with Vision AI...", level: .info)
 
         let startTime = CFAbsoluteTimeGetCurrent()
 
-        // Use detached task for compositing work
+        // Step 1: Run real person segmentation via Vision AI
+        let personMask = await VisionAIService.shared.segmentPerson(from: userPhoto)
+        usedRealSegmentation = personMask != nil
+
+        if personMask != nil {
+            DebugLogger.shared.log("🧠 VTO: Person segmentation succeeded — using body contour mask", level: .success)
+        } else {
+            DebugLogger.shared.log("⚠️ VTO: No person detected — using rectangle fallback", level: .warning)
+        }
+
+        // Step 2: Composite garments onto detected body
         let photo = userPhoto
         let outfitCopy = outfit
+        let mask = personMask
 
         let result = await Task.detached(priority: .userInitiated) {
-            await Self.compositeOutfit(onto: photo, outfit: outfitCopy)
+            await Self.compositeOutfit(onto: photo, outfit: outfitCopy, personMask: mask)
         }.value
 
         let elapsed = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
@@ -124,7 +137,8 @@ final class TryOnEngine {
         if let result {
             resultImage = result
             state = .done
-            DebugLogger.shared.log("✅ VTO: Outfit applied in \(elapsed)ms", level: .success)
+            let method = personMask != nil ? "Vision AI" : "fallback"
+            DebugLogger.shared.log("✅ VTO: Outfit applied in \(elapsed)ms (\(method))", level: .success)
         } else {
             state = .error(message: "Fallo en composición de imagen")
             DebugLogger.shared.log("❌ VTO: Compositing failed", level: .error)
@@ -138,38 +152,208 @@ final class TryOnEngine {
         resultImage = nil
         state = .idle
         lastProcessingTimeMs = 0
+        usedStableDiffusion = false
     }
 
-    // MARK: - Compositing (Phase 1: Enhanced Simulation)
+    /// Whether the last result was generated via Stable Diffusion.
+    private(set) var usedStableDiffusion = false
+
+    // MARK: - AI Generation (Stable Diffusion)
+
+    /// Generates a photo-realistic VTO image using Stable Diffusion inpainting.
+    ///
+    /// Flow:
+    /// 1. Segment person → create body mask
+    /// 2. Build clothing prompt from selected garments
+    /// 3. Create zone mask for clothing areas
+    /// 4. Run SD inpainting → photo-realistic result
+    ///
+    /// - Parameters:
+    ///   - userPhoto: Full-body photo of the user.
+    ///   - outfit: Selected garments to "wear".
+    /// - Returns: AI-generated image or nil on failure.
+    func generateWithAI(userPhoto: UIImage, outfit: OutfitSelection) async -> UIImage? {
+        guard outfit.hasAnySelection else {
+            resultImage = userPhoto
+            state = .done
+            return userPhoto
+        }
+
+        guard StableDiffusionService.shared.state.isReady else {
+            state = .error(message: "Motor de IA no disponible. Descarga el modelo primero.")
+            DebugLogger.shared.log("❌ VTO AI: SD pipeline not ready", level: .error)
+            return nil
+        }
+
+        state = .generatingAI(progress: 0.0)
+        DebugLogger.shared.log("🎨 VTO AI: Starting Stable Diffusion generation...", level: .info)
+
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        // Step 1: Get person segmentation mask
+        let personMask = await VisionAIService.shared.segmentPerson(from: userPhoto)
+        usedRealSegmentation = personMask != nil
+
+        // Step 2: Create zone mask for clothing areas
+        let clothingMask = createClothingZoneMask(
+            personMask: personMask,
+            imageSize: userPhoto.size,
+            outfit: outfit
+        )
+
+        // Step 3: Build prompt from garment descriptions
+        let prompt = buildClothingPrompt(outfit: outfit)
+        DebugLogger.shared.log("🎨 VTO AI: Prompt: \"\(prompt)\"", level: .info)
+
+        // Step 4: Run Stable Diffusion inpainting
+        let generated = await StableDiffusionService.shared.generateTryOn(
+            personImage: userPhoto,
+            mask: clothingMask,
+            prompt: prompt,
+            steps: 20,
+            guidanceScale: 7.5
+        )
+
+        let elapsed = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
+        lastProcessingTimeMs = elapsed
+
+        if let generated {
+            resultImage = generated
+            state = .done
+            usedStableDiffusion = true
+            DebugLogger.shared.log("✅ VTO AI: Generated in \(elapsed)ms", level: .success)
+        } else {
+            state = .error(message: "La generación con IA falló. Intenta de nuevo.")
+            DebugLogger.shared.log("❌ VTO AI: Generation failed after \(elapsed)ms", level: .error)
+        }
+
+        return generated
+    }
+
+    // MARK: - AI Helpers
+
+    /// Builds a text prompt describing the outfit for SD.
+    private func buildClothingPrompt(outfit: OutfitSelection) -> String {
+        var parts: [String] = ["person wearing"]
+
+        if let top = outfit.top {
+            let color = top.colorName.lowercased()
+            let style = top.styleTags.joined(separator: ", ")
+            parts.append("\(color) \(top.name.lowercased())")
+            if !style.isEmpty { parts.append("(\(style))") }
+        }
+
+        if let bottom = outfit.bottom {
+            let color = bottom.colorName.lowercased()
+            parts.append("with \(color) \(bottom.name.lowercased())")
+        }
+
+        if let shoes = outfit.shoes {
+            let color = shoes.colorName.lowercased()
+            parts.append("and \(color) \(shoes.name.lowercased())")
+        }
+
+        parts.append(", professional fashion photo, studio lighting, high quality, detailed clothing texture")
+
+        return parts.joined(separator: " ")
+    }
+
+    /// Creates a binary mask image indicating which zones to repaint.
+    ///
+    /// White = repaint (clothing zone), Black = keep (face, background).
+    private func createClothingZoneMask(
+        personMask: CGImage?,
+        imageSize: CGSize,
+        outfit: OutfitSelection
+    ) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: imageSize)
+        return renderer.image { ctx in
+            let cgContext = ctx.cgContext
+            let width = imageSize.width
+            let height = imageSize.height
+
+            // Start with all black (keep everything)
+            cgContext.setFillColor(UIColor.black.cgColor)
+            cgContext.fill(CGRect(origin: .zero, size: imageSize))
+
+            // If we have a person mask, use it to constrain painting to body
+            if let mask = personMask {
+                cgContext.saveGState()
+                cgContext.clip(to: CGRect(origin: .zero, size: imageSize), mask: mask)
+            }
+
+            // Paint white in clothing zones (areas to repaint)
+            cgContext.setFillColor(UIColor.white.cgColor)
+
+            if outfit.top != nil {
+                // Upper body: 20% to 50% of height
+                let topRect = CGRect(
+                    x: width * 0.1,
+                    y: height * 0.2,
+                    width: width * 0.8,
+                    height: height * 0.30
+                )
+                cgContext.fill(topRect)
+            }
+
+            if outfit.bottom != nil {
+                // Lower body: 48% to 78% of height
+                let bottomRect = CGRect(
+                    x: width * 0.15,
+                    y: height * 0.48,
+                    width: width * 0.7,
+                    height: height * 0.30
+                )
+                cgContext.fill(bottomRect)
+            }
+
+            if outfit.shoes != nil {
+                // Feet: 78% to 95% of height
+                let shoesRect = CGRect(
+                    x: width * 0.15,
+                    y: height * 0.78,
+                    width: width * 0.7,
+                    height: height * 0.17
+                )
+                cgContext.fill(shoesRect)
+            }
+
+            if personMask != nil {
+                cgContext.restoreGState()
+            }
+        }
+    }
+
+    // MARK: - Compositing (Vision AI + Core Graphics)
 
     /// Creates a visual composite of garments on the user photo.
     ///
-    /// Enhanced Phase 1 compositing using Core Graphics with:
-    /// - Multi-layer blending (multiply + softLight + overlay)
-    /// - Fabric texture simulation (stripes, knit, denim patterns)
-    /// - Edge feathering with rounded clips
-    /// - Directional lighting / fabric shading
-    /// - Inter-garment shadow casting
-    /// - Premium vignette
+    /// When a person mask is available (from VNGeneratePersonSegmentationRequest),
+    /// garment overlays are clipped to the actual body silhouette. Each slot
+    /// (top, bottom, shoes) is restricted to its proportional body zone within
+    /// the detected person mask.
     ///
-    /// In Phase 2, this would be replaced by CoreML inference.
-    private static func compositeOutfit(onto photo: UIImage, outfit: OutfitSelection) async -> UIImage? {
+    /// Falls back to rectangle-based compositing if no person was detected.
+    private static func compositeOutfit(
+        onto photo: UIImage,
+        outfit: OutfitSelection,
+        personMask: CGImage?
+    ) async -> UIImage? {
         let size = photo.size
         let renderer = UIGraphicsImageRenderer(size: size)
 
         return renderer.image { context in
             let cgContext = context.cgContext
-            let rect = CGRect(origin: .zero, size: size)
+            let fullRect = CGRect(origin: .zero, size: size)
 
-            // Draw the original photo
-            photo.draw(in: rect)
+            // Draw the original photo as base
+            photo.draw(in: fullRect)
 
-            // Apply each garment overlay with enhanced compositing
+            // Apply each garment overlay
             for slot in GarmentSlot.allCases {
                 guard let garment = outfit.garment(for: slot) else { continue }
 
                 let zone = slot.bodyZone
-                // Body-proportional sizing with natural taper
                 let insetX: CGFloat = slot == .shoes ? 0.20 : 0.08
                 let garmentRect = CGRect(
                     x: size.width * insetX,
@@ -181,20 +365,26 @@ final class TryOnEngine {
                 // === Layer 1: Drop Shadow ===
                 cgContext.saveGState()
                 let shadowRect = garmentRect.offsetBy(dx: 3, dy: 5)
-                cgContext.setFillColor(UIColor.black.withAlphaComponent(0.15).cgColor)
-                let shadowPath = UIBezierPath(
+                cgContext.setFillColor(UIColor.black.withAlphaComponent(0.12).cgColor)
+                UIBezierPath(
                     roundedRect: shadowRect,
                     cornerRadius: garmentRect.width * 0.06
-                )
-                shadowPath.fill()
+                ).fill()
                 cgContext.restoreGState()
 
-                // === Layer 2: Base Garment Shape (Feathered Clip) ===
+                // === Layer 2: Clip to Body Mask (Real AI) ===
                 cgContext.saveGState()
 
-                let cornerRadius = garmentRect.width * 0.06
-                let clipPath = UIBezierPath(roundedRect: garmentRect, cornerRadius: cornerRadius)
-                clipPath.addClip()
+                if let mask = personMask {
+                    // Clip to person silhouette within this garment zone.
+                    // The mask covers the full image; we intersect with the zone rect.
+                    cgContext.clip(to: garmentRect, mask: mask)
+                } else {
+                    // Fallback: clip to rounded rectangle
+                    let cornerRadius = garmentRect.width * 0.06
+                    let clipPath = UIBezierPath(roundedRect: garmentRect, cornerRadius: cornerRadius)
+                    clipPath.addClip()
+                }
 
                 // === Layer 3: Gradient Fill (Multiply blend) ===
                 let colors = garment.gradientColors.map { UIColor($0).cgColor } as CFArray
@@ -264,26 +454,25 @@ final class TryOnEngine {
                 cgContext.setBlendMode(.normal)
                 cgContext.setStrokeColor(UIColor.white.withAlphaComponent(0.08).cgColor)
                 cgContext.setLineWidth(1.0)
-                let seamPath = UIBezierPath(
+                let seamCorner = garmentRect.width * 0.06
+                UIBezierPath(
                     roundedRect: garmentRect.insetBy(dx: 2, dy: 2),
-                    cornerRadius: cornerRadius - 2
-                )
-                seamPath.stroke()
+                    cornerRadius: max(seamCorner - 2, 0)
+                ).stroke()
 
                 cgContext.restoreGState()
             }
 
             // === Premium Vignette ===
             cgContext.saveGState()
-            let vignetteGradient = CGGradient(
+            if let vignetteGradient = CGGradient(
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: [
                     UIColor.clear.cgColor,
                     UIColor.black.withAlphaComponent(0.15).cgColor
                 ] as CFArray,
                 locations: [0.55, 1.0]
-            )
-            if let vignetteGradient {
+            ) {
                 let center = CGPoint(x: size.width / 2, y: size.height / 2)
                 let radius = max(size.width, size.height) / 2
                 cgContext.drawRadialGradient(
@@ -326,7 +515,6 @@ final class TryOnEngine {
             ctx.setStrokeColor(UIColor.white.withAlphaComponent(0.07).cgColor)
             ctx.setLineWidth(0.5)
             let spacing: CGFloat = 8
-            // Forward diagonals
             var offset: CGFloat = 0
             while offset < rect.width + rect.height {
                 ctx.move(to: CGPoint(x: rect.minX + offset, y: rect.minY))
@@ -334,7 +522,6 @@ final class TryOnEngine {
                 ctx.strokePath()
                 offset += spacing
             }
-            // Back diagonals
             offset = 0
             while offset < rect.width + rect.height {
                 ctx.move(to: CGPoint(x: rect.maxX - offset, y: rect.minY))

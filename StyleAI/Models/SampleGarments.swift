@@ -17,6 +17,8 @@ struct SampleGarment: Identifiable, Hashable, Sendable {
     let gradientColors: [Color]
     let icon: String
     let thermalIndex: Double
+    let colorName: String
+    let styleTags: [String]
 
     /// Human-readable thermal label
     var thermalLabel: String {
@@ -50,7 +52,9 @@ enum SampleGarments {
         slot: .top,
         gradientColors: [.white, Color(white: 0.92)],
         icon: "tshirt.fill",
-        thermalIndex: 0.70
+        thermalIndex: 0.70,
+        colorName: "white",
+        styleTags: ["casual", "basic"]
     )
 
     static let blackHoodie = SampleGarment(
@@ -58,7 +62,9 @@ enum SampleGarments {
         slot: .top,
         gradientColors: [Color(white: 0.15), Color(white: 0.25)],
         icon: "tshirt.fill",
-        thermalIndex: 0.20
+        thermalIndex: 0.20,
+        colorName: "black",
+        styleTags: ["casual", "streetwear", "warm"]
     )
 
     static let denimJacket = SampleGarment(
@@ -67,7 +73,9 @@ enum SampleGarments {
         gradientColors: [Color(hue: 0.60, saturation: 0.50, brightness: 0.55),
                          Color(hue: 0.58, saturation: 0.40, brightness: 0.70)],
         icon: "tshirt.fill",
-        thermalIndex: 0.30
+        thermalIndex: 0.30,
+        colorName: "blue denim",
+        styleTags: ["casual", "layering"]
     )
 
     static let stripedPolo = SampleGarment(
@@ -76,7 +84,9 @@ enum SampleGarments {
         gradientColors: [Color(hue: 0.58, saturation: 0.30, brightness: 0.85),
                          Color.white],
         icon: "tshirt.fill",
-        thermalIndex: 0.60
+        thermalIndex: 0.60,
+        colorName: "light blue striped",
+        styleTags: ["smart casual", "preppy"]
     )
 
     static let redShirt = SampleGarment(
@@ -85,7 +95,9 @@ enum SampleGarments {
         gradientColors: [Color(hue: 0.0, saturation: 0.65, brightness: 0.75),
                          Color(hue: 0.02, saturation: 0.50, brightness: 0.85)],
         icon: "tshirt.fill",
-        thermalIndex: 0.55
+        thermalIndex: 0.55,
+        colorName: "red",
+        styleTags: ["casual", "bold"]
     )
 
     // MARK: Bottoms
@@ -96,7 +108,9 @@ enum SampleGarments {
         gradientColors: [Color(hue: 0.62, saturation: 0.55, brightness: 0.30),
                          Color(hue: 0.60, saturation: 0.45, brightness: 0.40)],
         icon: "figure.walk",
-        thermalIndex: 0.35
+        thermalIndex: 0.35,
+        colorName: "dark blue denim",
+        styleTags: ["casual", "versatile"]
     )
 
     static let beigeChinos = SampleGarment(
@@ -105,7 +119,9 @@ enum SampleGarments {
         gradientColors: [Color(hue: 0.10, saturation: 0.25, brightness: 0.80),
                          Color(hue: 0.08, saturation: 0.20, brightness: 0.90)],
         icon: "figure.walk",
-        thermalIndex: 0.55
+        thermalIndex: 0.55,
+        colorName: "beige",
+        styleTags: ["smart casual", "classic"]
     )
 
     static let blackPants = SampleGarment(
@@ -113,7 +129,9 @@ enum SampleGarments {
         slot: .bottom,
         gradientColors: [Color(white: 0.12), Color(white: 0.22)],
         icon: "figure.walk",
-        thermalIndex: 0.40
+        thermalIndex: 0.40,
+        colorName: "black",
+        styleTags: ["formal", "versatile"]
     )
 
     static let cargoShorts = SampleGarment(
@@ -122,7 +140,9 @@ enum SampleGarments {
         gradientColors: [Color(hue: 0.25, saturation: 0.30, brightness: 0.50),
                          Color(hue: 0.22, saturation: 0.25, brightness: 0.60)],
         icon: "figure.walk",
-        thermalIndex: 0.80
+        thermalIndex: 0.80,
+        colorName: "olive green",
+        styleTags: ["casual", "outdoor"]
     )
 
     static let greyJoggers = SampleGarment(
@@ -130,7 +150,9 @@ enum SampleGarments {
         slot: .bottom,
         gradientColors: [Color(white: 0.45), Color(white: 0.60)],
         icon: "figure.walk",
-        thermalIndex: 0.45
+        thermalIndex: 0.45,
+        colorName: "grey",
+        styleTags: ["casual", "sporty", "athleisure"]
     )
 
     // MARK: Shoes
@@ -140,7 +162,9 @@ enum SampleGarments {
         slot: .shoes,
         gradientColors: [.white, Color(white: 0.90)],
         icon: "shoe.fill",
-        thermalIndex: 0.60
+        thermalIndex: 0.60,
+        colorName: "white",
+        styleTags: ["casual", "sporty"]
     )
 
     static let blackBoots = SampleGarment(
@@ -148,7 +172,9 @@ enum SampleGarments {
         slot: .shoes,
         gradientColors: [Color(white: 0.10), Color(white: 0.20)],
         icon: "shoe.fill",
-        thermalIndex: 0.15
+        thermalIndex: 0.15,
+        colorName: "black",
+        styleTags: ["formal", "warm", "rugged"]
     )
 
     static let runningShoes = SampleGarment(
@@ -157,7 +183,9 @@ enum SampleGarments {
         gradientColors: [Color(hue: 0.08, saturation: 0.80, brightness: 0.95),
                          Color(hue: 0.05, saturation: 0.60, brightness: 0.80)],
         icon: "shoe.fill",
-        thermalIndex: 0.65
+        thermalIndex: 0.65,
+        colorName: "orange",
+        styleTags: ["sporty", "athletic"]
     )
 
     static let loafers = SampleGarment(
@@ -166,7 +194,9 @@ enum SampleGarments {
         gradientColors: [Color(hue: 0.07, saturation: 0.55, brightness: 0.40),
                          Color(hue: 0.06, saturation: 0.45, brightness: 0.55)],
         icon: "shoe.fill",
-        thermalIndex: 0.50
+        thermalIndex: 0.50,
+        colorName: "brown",
+        styleTags: ["formal", "classic", "elegant"]
     )
 
     static let sandals = SampleGarment(
@@ -175,7 +205,9 @@ enum SampleGarments {
         gradientColors: [Color(hue: 0.10, saturation: 0.30, brightness: 0.75),
                          Color(hue: 0.08, saturation: 0.25, brightness: 0.85)],
         icon: "shoe.fill",
-        thermalIndex: 0.90
+        thermalIndex: 0.90,
+        colorName: "tan",
+        styleTags: ["casual", "summer", "beach"]
     )
 
     // MARK: Collections

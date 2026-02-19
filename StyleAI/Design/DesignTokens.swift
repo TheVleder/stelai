@@ -21,6 +21,7 @@ enum StyleColors {
     static let accentRose    = Color(hue: 0.93, saturation: 0.45, brightness: 0.90)  // Rose Gold
     static let accentGold    = Color(hue: 0.10, saturation: 0.50, brightness: 0.95)  // Warm Gold
     static let accentMint    = Color(hue: 0.45, saturation: 0.35, brightness: 0.85)  // Fresh Mint
+    static let brandPink     = Color(hue: 0.90, saturation: 0.55, brightness: 0.85)  // Brand Pink
 
     // Semantic
     static let success       = Color(hue: 0.38, saturation: 0.60, brightness: 0.70)
@@ -180,5 +181,38 @@ extension View {
     /// Apply shimmer loading animation.
     func shimmer() -> some View {
         modifier(ShimmerEffect())
+    }
+}
+
+// MARK: - Color Hex Utilities
+
+extension Color {
+    /// Creates a Color from a hex string (e.g. "#FF5733" or "FF5733").
+    init(hex: String) {
+        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&int)
+        let r, g, b: Double
+        switch hex.count {
+        case 6:
+            r = Double((int >> 16) & 0xFF) / 255.0
+            g = Double((int >> 8) & 0xFF) / 255.0
+            b = Double(int & 0xFF) / 255.0
+        default:
+            r = 1; g = 1; b = 1
+        }
+        self.init(red: r, green: g, blue: b)
+    }
+}
+
+extension UIColor {
+    /// Returns the hex string representation (e.g. "#FF5733").
+    var hexString: String {
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        getRed(&r, green: &g, blue: &b, alpha: nil)
+        return String(format: "#%02X%02X%02X",
+                      Int(r * 255), Int(g * 255), Int(b * 255))
     }
 }

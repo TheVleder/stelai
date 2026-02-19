@@ -6,6 +6,7 @@
 
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 // MARK: - App Entry
 
@@ -58,6 +59,9 @@ struct StyleAIApp: App {
                     DebugLogger.shared.log("💾 SwiftData initialized successfully", level: .success)
                     DebugLogger.shared.log("🚀 StyleAI App launched", level: .info)
                     DebugLogger.shared.log("📱 Device: \(DeviceChecker.validate().chipName)", level: .info)
+
+                    // Request notification permissions for Weather Stylist
+                    await requestNotificationPermissions()
                 }
         }
         .modelContainer(modelContainer)
@@ -119,5 +123,22 @@ struct StyleAIApp: App {
         tabBarAppearance.backgroundColor = UIColor(white: 0.05, alpha: 0.8)
         UITabBar.appearance().standardAppearance = tabBarAppearance
         UITabBar.appearance().scrollEdgeAppearance = tabBarAppearance
+    }
+
+    // MARK: - Notification Permissions
+
+    /// Requests notification authorization for the Weather Stylist daily outfit suggestions.
+    private func requestNotificationPermissions() async {
+        let center = UNUserNotificationCenter.current()
+        do {
+            let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+            if granted {
+                DebugLogger.shared.log("🔔 Notification permissions granted", level: .success)
+            } else {
+                DebugLogger.shared.log("🔕 Notification permissions denied by user", level: .warning)
+            }
+        } catch {
+            DebugLogger.shared.log("❌ Notification permission error: \(error.localizedDescription)", level: .error)
+        }
     }
 }

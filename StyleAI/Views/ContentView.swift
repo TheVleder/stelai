@@ -230,41 +230,35 @@ struct ContentView: View {
 
     private var modelStatusCards: some View {
         VStack(spacing: StyleSpacing.sm) {
-            ForEach(ModelDescriptor.allModels, id: \.name) { model in
-                if let modelState = modelManager.modelStates[model.name] {
-                    HStack {
-                        // Status indicator
-                        Circle()
-                            .fill(statusColor(for: modelState))
-                            .frame(width: 8, height: 8)
+            ForEach(modelManager.modelStates.sorted(by: { $0.key < $1.key }), id: \.key) { name, modelState in
+                HStack {
+                    // Status indicator
+                    Circle()
+                        .fill(statusColor(for: modelState))
+                        .frame(width: 8, height: 8)
 
-                        Text(model.name)
-                            .font(StyleTypography.footnote)
-                            .foregroundStyle(StyleColors.textSecondary)
+                    Text(name)
+                        .font(StyleTypography.footnote)
+                        .foregroundStyle(StyleColors.textSecondary)
 
-                        Spacer()
+                    Spacer()
 
-                        Text(statusLabel(for: modelState))
-                            .font(StyleTypography.captionMono)
-                            .foregroundStyle(StyleColors.textTertiary)
-
-                        Text("\(model.expectedSizeMB) MB")
-                            .font(StyleTypography.captionMono)
-                            .foregroundStyle(StyleColors.textTertiary)
-                    }
-                    .padding(.horizontal, StyleSpacing.md)
-                    .padding(.vertical, StyleSpacing.sm)
-                    .glassCard(cornerRadius: 10)
+                    Text(statusLabel(for: modelState))
+                        .font(StyleTypography.captionMono)
+                        .foregroundStyle(StyleColors.textTertiary)
                 }
+                .padding(.horizontal, StyleSpacing.md)
+                .padding(.vertical, StyleSpacing.sm)
+                .glassCard(cornerRadius: 10)
             }
         }
     }
 
     private var storageInfoFooter: some View {
         HStack(spacing: StyleSpacing.sm) {
-            Image(systemName: "internaldrive")
+            Image(systemName: "brain.head.profile")
                 .font(.system(size: 12))
-            Text("Los modelos se almacenan localmente (~3.1 GB)")
+            Text("Vision AI integrada en iOS — sin descargas")
                 .font(StyleTypography.caption)
         }
         .foregroundStyle(StyleColors.textTertiary)

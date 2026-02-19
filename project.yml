@@ -18,6 +18,11 @@ settings:
     GENERATE_INFOPLIST_FILE: true
     ENABLE_USER_SCRIPT_SANDBOXING: true
 
+packages:
+  StableDiffusion:
+    url: https://github.com/apple/ml-stable-diffusion
+    from: "1.1.1"
+
 targets:
   StyleAI:
     type: application
@@ -26,6 +31,9 @@ targets:
       - path: StyleAI
         excludes:
           - "**/.DS_Store"
+    dependencies:
+      - package: StableDiffusion
+        product: StableDiffusion
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.styleai.app

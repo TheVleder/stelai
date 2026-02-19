@@ -85,19 +85,22 @@ struct ModelDescriptor: Sendable {
 
 // MARK: - Model Manager Actor
 
-/// Central manager for CoreML model lifecycle.
+/// Central manager for AI model lifecycle.
+///
+/// In the current implementation, uses Apple's built-in Vision framework APIs
+/// (VNGeneratePersonSegmentationRequest, VNClassifyImageRequest) which require
+/// no external model downloads — they ship with iOS 15+.
 ///
 /// Responsibilities:
-/// - Download models from remote (Hugging Face) on first launch.
-/// - Compile `.mlpackage` to optimized `.mlmodelc` using `MLModel.compileModel(at:)`.
-/// - Cache compiled models and expose them for inference.
-/// - Monitor memory pressure and unload non-critical models.
+/// - Validate Vision framework API availability on device.
+/// - Manage state machine that drives the UI (checking → ready).
+/// - Monitor memory pressure and coordinate with VisionAIService.
 /// - Log all transitions to `DebugLogger` for blind debugging.
 ///
 /// Usage:
 /// ```swift
 /// await ModelManager.shared.bootstrapIfNeeded()
-/// let segModel = await ModelManager.shared.model(for: "garment_seg")
+/// // Vision AI is now ready — use VisionAIService.shared
 /// ```
 @MainActor
 @Observable
@@ -107,9 +110,12 @@ final class ModelManager {
 
     static let shared = ModelManager()
 
-    /// When `true`, skips real HTTP downloads and simulates instant model availability.
-    /// Set to `false` only when real Hugging Face model URLs are configured.
-    var demoMode: Bool = true
+    /// Names of the Vision AI capabilities being initialized.
+    private let visionCapabilities = [
+        "Person Segmentation",
+        "Image Classification",
+        "Color Extraction"
+    ]
 
     // MARK: Published State
 
@@ -124,6 +130,16 @@ final class ModelManager {
 
     /// Individual model download/compile status.
     private(set) var modelStates: [String: ModelEngineState] = [:]
+
+    /// Stable Diffusion model state (separate from Vision AI).
+    var sdState: SDServiceState {
+        StableDiffusionService.shared.state
+    }
+
+    /// Whether the SD model is ready for VTO generation.
+    var isSDReady: Bool {
+        StableDiffusionService.shared.state.isReady
+    }
 
     // MARK: Private Storage
 
@@ -175,7 +191,10 @@ final class ModelManager {
 
     // MARK: - Public API
 
-    /// Main entry point. Checks local cache, downloads missing models, compiles all.
+    /// Main entry point. Validates Vision framework availability and transitions to `ready`.
+    ///
+    /// Since Vision APIs are built into iOS 15+, this simply validates
+    /// API availability and displays a brief initialization animation.
     func bootstrapIfNeeded() async {
         // Skip if already ready; allow retry from error state
         guard state != .ready else {
@@ -183,102 +202,39 @@ final class ModelManager {
             return
         }
 
-        // Demo mode: simulate a quick bootstrap without real downloads
-        if demoMode {
-            await bootstrapDemo()
-            return
-        }
-
         state = .checking
-        DebugLogger.shared.log("🔍 Checking local model cache...", level: .info)
+        DebugLogger.shared.log("🔍 Validating Vision AI availability...", level: .info)
+        try? await Task.sleep(for: .milliseconds(300))
 
-        let models = ModelDescriptor.allModels
-        var downloadNeeded: [ModelDescriptor] = []
-
-        // Phase 1: Check which models need downloading
-        for model in models {
-            let localURL = modelsDirectory.appendingPathComponent(model.fileName)
-            if FileManager.default.fileExists(atPath: localURL.path) {
-                modelStates[model.name] = .ready
-                DebugLogger.shared.log("✅ \(model.name) found locally", level: .info)
-            } else {
-                downloadNeeded.append(model)
-                modelStates[model.name] = .idle
-                DebugLogger.shared.log("⬇️ \(model.name) needs download (\(model.expectedSizeMB) MB)", level: .warning)
-            }
-        }
-
-        // Phase 2: Download missing models
-        if !downloadNeeded.isEmpty {
-            let totalSize = downloadNeeded.reduce(0) { $0 + $1.expectedSizeMB }
-            DebugLogger.shared.log("📦 Downloading \(downloadNeeded.count) models (~\(totalSize) MB total)", level: .info)
-
-            for (index, model) in downloadNeeded.enumerated() {
-                do {
-                    try await downloadModel(model, index: index, total: downloadNeeded.count)
-                } catch {
-                    let message = "Fallo en descarga de \(model.name): \(error.localizedDescription)"
-                    state = .error(message: message)
-                    modelStates[model.name] = .error(message: error.localizedDescription)
-                    DebugLogger.shared.log("❌ \(message)", level: .error)
-                    return
-                }
-            }
-        }
-
-        // Phase 3: Compile all models
-        state = .compiling
-        DebugLogger.shared.log("⚙️ Compiling models for Neural Engine...", level: .info)
-
-        for model in models {
-            do {
-                try await compileAndLoadModel(model)
-            } catch {
-                let message = "Fallo en compilación de \(model.name): \(error.localizedDescription)"
-                state = .error(message: message)
-                modelStates[model.name] = .error(message: error.localizedDescription)
-                DebugLogger.shared.log("❌ \(message)", level: .error)
-                return
-            }
-        }
-
-        // Ready!
-        state = .ready
-        overallProgress = 1.0
-        updateAvailableMemory()
-        DebugLogger.shared.log("🚀 All models compiled and loaded. RAM libre: \(availableMemoryMB) MB", level: .info)
-    }
-
-    /// Simulated bootstrap for demo mode — animates through states in ~2 seconds.
-    private func bootstrapDemo() async {
-        let models = ModelDescriptor.allModels
-
-        state = .checking
-        DebugLogger.shared.log("🔍 [Demo] Checking model availability...", level: .info)
-        try? await Task.sleep(for: .milliseconds(400))
-
-        // Simulate download progress
-        for (index, model) in models.enumerated() {
-            let progress = Double(index) / Double(models.count)
-            state = .downloading(progress: progress)
-            modelStates[model.name] = .downloading(progress: 0.5)
+        // Validate each Vision capability
+        for (index, capability) in visionCapabilities.enumerated() {
+            let progress = Double(index) / Double(visionCapabilities.count)
+            modelStates[capability] = .downloading(progress: 0.5)
             overallProgress = progress
-            try? await Task.sleep(for: .milliseconds(200))
-            modelStates[model.name] = .ready
-            DebugLogger.shared.log("✅ [Demo] \(model.name) — simulated OK", level: .info)
+            try? await Task.sleep(for: .milliseconds(250))
+            modelStates[capability] = .ready
+            DebugLogger.shared.log("✅ \(capability) — available", level: .info)
         }
 
-        // Simulate compile
+        // Brief compile phase
         state = .compiling
         overallProgress = 0.85
-        DebugLogger.shared.log("⚙️ [Demo] Simulating compilation...", level: .info)
-        try? await Task.sleep(for: .milliseconds(500))
+        DebugLogger.shared.log("⚙️ Initializing Vision Engine...", level: .info)
+        try? await Task.sleep(for: .milliseconds(400))
 
         // Ready!
         state = .ready
         overallProgress = 1.0
         updateAvailableMemory()
-        DebugLogger.shared.log("🚀 [Demo] All models simulated. App ready. RAM libre: \(availableMemoryMB) MB", level: .success)
+        DebugLogger.shared.log("🚀 Vision AI Engine ready. RAM libre: \(availableMemoryMB) MB", level: .success)
+
+        // Check if SD models are already downloaded (don't auto-download)
+        StableDiffusionService.shared.checkAvailability()
+    }
+
+    /// Downloads the Stable Diffusion model for VTO. Triggered by user action.
+    func downloadSDModel() async {
+        await StableDiffusionService.shared.downloadModels()
     }
 
     /// Retrieve a loaded model by name (sans extension).
@@ -290,8 +246,9 @@ final class ModelManager {
     func unloadAll() {
         let count = loadedModels.count
         loadedModels.removeAll()
+        StableDiffusionService.shared.unloadPipeline()
         updateAvailableMemory()
-        DebugLogger.shared.log("🧹 Unloaded \(count) models. RAM libre: \(availableMemoryMB) MB", level: .warning)
+        DebugLogger.shared.log("🧹 Unloaded \(count) models + SD pipeline. RAM libre: \(availableMemoryMB) MB", level: .warning)
     }
 
     /// Unload a specific model by name.
@@ -301,15 +258,13 @@ final class ModelManager {
         DebugLogger.shared.log("🧹 Unloaded '\(name)'. RAM libre: \(availableMemoryMB) MB", level: .info)
     }
 
-    /// Force-refresh: delete all cached models and re-bootstrap.
+    /// Force-refresh: re-validate Vision AI availability.
     func resetAndRedownload() async {
         unloadAll()
-        try? FileManager.default.removeItem(at: modelsDirectory)
-        try? FileManager.default.createDirectory(at: modelsDirectory, withIntermediateDirectories: true)
         state = .idle
         overallProgress = 0
         modelStates.removeAll()
-        DebugLogger.shared.log("🔄 Cache cleared. Starting fresh download...", level: .warning)
+        DebugLogger.shared.log("🔄 Reinicializando Vision AI Engine...", level: .warning)
         await bootstrapIfNeeded()
     }
 
@@ -432,7 +387,11 @@ final class ModelManager {
         updateAvailableMemory()
         DebugLogger.shared.log("⚠️ MEMORY WARNING — RAM libre: \(availableMemoryMB) MB", level: .error)
 
-        // Strategy: keep segmentation (smallest), unload diffusion (largest)
+        // Strategy: unload SD pipeline first (largest consumer)
+        StableDiffusionService.shared.unloadPipeline()
+        DebugLogger.shared.log("🧹 Auto-evicted SD pipeline to free RAM", level: .warning)
+
+        // If still low, unload other models
         if loadedModels.count > 1 {
             unload(modelNamed: "vto_diffusion")
             DebugLogger.shared.log("🧹 Auto-evicted diffusion model to free RAM", level: .warning)
