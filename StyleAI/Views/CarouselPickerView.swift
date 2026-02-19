@@ -11,7 +11,7 @@ import SwiftUI
 // MARK: - Carousel Item Protocol
 
 /// Unifies WardrobeItem and SampleGarment for carousel display.
-struct CarouselGarment: Identifiable, Hashable {
+struct CarouselGarment: Identifiable, Hashable, @unchecked Sendable {
     let id: UUID
     let name: String
     let slot: GarmentSlot
@@ -38,13 +38,25 @@ struct CarouselGarment: Identifiable, Hashable {
             thumbnail = UIImage(data: item.imageData)
         }
 
+        // Generate default gradient from slot accent color for compositing
+        let defaultGradient: [Color] = {
+            switch slot {
+            case .top:    return [Color(hue: 0.58, saturation: 0.30, brightness: 0.65),
+                                  Color(hue: 0.60, saturation: 0.25, brightness: 0.80)]
+            case .bottom: return [Color(hue: 0.62, saturation: 0.40, brightness: 0.35),
+                                  Color(hue: 0.60, saturation: 0.35, brightness: 0.50)]
+            case .shoes:  return [Color(hue: 0.0, saturation: 0.0, brightness: 0.40),
+                                  Color(hue: 0.0, saturation: 0.0, brightness: 0.55)]
+            }
+        }()
+
         return CarouselGarment(
             id: item.id,
             name: item.type.label,
             slot: slot,
             thermalIndex: item.thermalIndex,
             thumbnailImage: thumbnail,
-            gradientColors: [],
+            gradientColors: defaultGradient,
             icon: item.type.icon,
             isFromWardrobe: true
         )
