@@ -294,17 +294,26 @@ final class TryOnEngine {
             // If we have a person mask, use it to constrain painting to body
             if let mask = personMask {
                 cgContext.saveGState()
+                
+                // CoreGraphics clipping requires coordinates inversion in iOS
+                cgContext.translateBy(x: 0, y: height)
+                cgContext.scaleBy(x: 1.0, y: -1.0)
+                
                 cgContext.clip(to: CGRect(origin: .zero, size: imageSize), mask: mask)
+                
+                // Revert coordinate inversion for subsequent drawing
+                cgContext.scaleBy(x: 1.0, y: -1.0)
+                cgContext.translateBy(x: 0, y: -height)
             }
 
             // Paint white in clothing zones (areas to repaint)
             cgContext.setFillColor(UIColor.white.cgColor)
 
             if outfit.top != nil {
-                // Upper body: 25% to 55% of height (lowered to protect neck/face)
+                // Upper body: lowered to protect neck/face
                 let topRect = CGRect(
                     x: width * 0.1,
-                    y: height * 0.25,
+                    y: height * 0.28,
                     width: width * 0.8,
                     height: height * 0.30
                 )
@@ -383,10 +392,17 @@ final class TryOnEngine {
                 cgContext.saveGState()
 
                 if let mask = personMask {
-                    // CRITICAL FIX: The personMask represents the FULL image silhouette.
-                    // If we clip it to garmentRect, the full body gets squashed into the torso box!
-                    // We must clip the mask to the full image, THEN clip to the garment bounding box.
+                    // CoreGraphics clipping requires coordinates inversion in iOS
+                    cgContext.translateBy(x: 0, y: size.height)
+                    cgContext.scaleBy(x: 1.0, y: -1.0)
+                    
                     cgContext.clip(to: fullRect, mask: mask)
+                    
+                    // Revert coordinate inversion for subsequent drawing
+                    cgContext.scaleBy(x: 1.0, y: -1.0)
+                    cgContext.translateBy(x: 0, y: -size.height)
+                    
+                    // Final logical clip to garment area
                     cgContext.clip(to: garmentRect)
                 } else {
                     let cornerRadius = garmentRect.width * 0.06

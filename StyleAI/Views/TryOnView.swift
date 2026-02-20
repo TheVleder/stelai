@@ -338,6 +338,17 @@ struct TryOnView: View {
         }
         .frame(height: 460)
         .background(Color.black.opacity(0.15))
+        // Add downward drag gesture to the entire carousel area to open full screen
+        .gesture(
+            DragGesture()
+                .onEnded { value in
+                    if value.translation.height > 50 && hasPhoto {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                            isFullScreen = true
+                        }
+                    }
+                }
+        )
     }
 
     /// Merges wardrobe items with sample garments for a given slot.

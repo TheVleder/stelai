@@ -331,62 +331,123 @@ final class VisionAIService {
     /// - Returns: A cropped `UIImage` of the garment region.
     func cropSmartGarmentRegion(from image: UIImage, type: GarmentType, personMask: CGImage?) -> UIImage {
         let size = image.size
-
-        let cropRect: CGRect
-        switch type {
-        case .top, .outerwear:
-            // Upper 50% of image
-            cropRect = CGRect(x: 0, y: 0, width: size.width, height: size.height * 0.50)
-        case .bottom:
-            // Middle zone: 35% to 70%
-            let yStart = size.height * 0.35
-            cropRect = CGRect(x: 0, y: yStart, width: size.width, height: size.height * 0.35)
-        case .shoes:
-            // Lower 30%: 70% to 100%
-            let yStart = size.height * 0.70
-            cropRect = CGRect(x: 0, y: yStart, width: size.width, height: size.height * 0.30)
-        default:
-            // Full image for accessories, full-body, etc.
-            return image
+        
+        // 1. Aplica la máscara Alpha para aislar SOLO a la persona / tela del fondo
+        let isolatedImage: UIImage
+        if let mask = personMask {
+            let format = UIGraphicsImageRendererFormat()
+            format.opaque = false
+            format.scale = image.scale
+            isolatedImage = UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+                let cgContext = ctx.cgContext
+                let fullRect = CGRect(origin: .zero, size: size)
+                
+                cgContext.saveGState()
+                // Invertimos coordenadas para la máscara CoreGraphics
+                cgContext.translateBy(x: 0, y: size.height)
+                cgContext.scaleBy(x: 1.0, y: -1.0)
+                cgContext.clip(to: fullRect, mask: mask)
+                cgContext.scaleBy(x: 1.0, y: -1.0)
+                cgContext.translateBy(x: 0, y: -size.height)
+                
+                image.draw(in: fullRect)
+                cgContext.restoreGState()
+            }
+        } else {
+            isolatedImage = image
         }
 
-        // Use UIGraphicsImageRenderer to crop and apply mask cleanly
-        let format = UIGraphicsImageRendererFormat()
-        format.opaque = false
-        format.scale = image.scale
-
-        let renderer = UIGraphicsImageRenderer(size: cropRect.size, format: format)
-        let croppedImage = renderer.image { ctx in
-            let cgContext = ctx.cgContext
-            
-            // Calculate where to draw the full image so the target rect lands at (0,0)
-            let drawRect = CGRect(x: -cropRect.origin.x, y: -cropRect.origin.y, width: size.width, height: size.height)
-
-            // If we have a mask, apply it
-            if let mask = personMask {
-                cgContext.saveGState()
-                
-                // CoreGraphics clipping mask needs to be translated properly
-                // Flip coordinates for mask
-                cgContext.translateBy(x: 0, y: cropRect.size.height)
-                cgContext.scaleBy(x: 1.0, y: -1.0)
-                
-                let maskRect = CGRect(x: -cropRect.origin.x, y: -(size.height - cropRect.maxY), width: size.width, height: size.height)
-                cgContext.clip(to: maskRect, mask: mask)
-                
-                // Restore transform for drawing image
-                cgContext.scaleBy(x: 1.0, y: -1.0)
-                cgContext.translateBy(x: 0, y: -cropRect.size.height)
-                
-                image.draw(in: drawRect)
-                cgContext.restoreGState()
-            } else {
-                image.draw(in: drawRect)
+        // 2. Extraer Bounding Box de la ropa (Píxeles no transparentes) usando CoreGraphics
+        guard let cgIsolated = isolatedImage.cgImage else { return isolatedImage }
+        let width = cgIsolated.width
+        let height = cgIsolated.height
+        let colorSpace = CGColorSpaceCreateDeviceGray()
+        let bitmapInfo = CGImageAlphaInfo.alphaOnly.rawValue
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width, space: colorSpace, bitmapInfo: bitmapInfo) else {
+            return isolatedImage
+        }
+        
+        context.draw(cgIsolated, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data else { return isolatedImage }
+        let buffer = data.bindMemory(to: UInt8.self, capacity: width * height)
+        
+        var minX = width
+        var maxX = 0
+        var minY = height
+        var maxY = 0
+        var foundAlpha = false
+        
+        // Scan alpha channel to find true bounding box
+        for y in 0..<height {
+            let rowOffset = y * width
+            for x in 0..<width {
+                if buffer[rowOffset + x] > 10 { // Threshold for visibility
+                    if x < minX { minX = x }
+                    if x > maxX { maxX = x }
+                    if y < minY { minY = y }
+                    if y > maxY { maxY = y }
+                    foundAlpha = true
+                }
             }
         }
+        
+        let subjectRect: CGRect
+        if foundAlpha {
+            // Convert to logical coordinates
+            let scale = image.scale
+            subjectRect = CGRect(
+                x: CGFloat(minX) / scale,
+                y: CGFloat(minY) / scale, // CoreGraphics coordinates (y=0 is bottom) so it's vertically flipped, we'll handle below
+                width: CGFloat(maxX - minX) / scale,
+                height: CGFloat(maxY - minY) / scale
+            )
+        } else {
+            subjectRect = CGRect(origin: .zero, size: size)
+        }
 
-        DebugLogger.shared.log("✂️ VisionAI: Smart Cropped \(type.label) region: \(Int(cropRect.width))×\(Int(cropRect.height))", level: .info)
-        return croppedImage
+        // 3. Cruzar True Bounding Box con el tipo de prenda
+        // Como y=0 era abajo al dibujar en CGContext gris, la zona visual "top" corresponde a la Y más alta del scan.
+        // Convertimos a coordenadas UI (y=0 arriba)
+        let uiSubjectY = size.height - subjectRect.maxY
+        let uiSubjectRect = CGRect(x: subjectRect.minX, y: uiSubjectY, width: subjectRect.width, height: subjectRect.height)
+        
+        var smartCropRect = uiSubjectRect
+        
+        switch type {
+        case .top, .outerwear:
+            // Aseguramos capturar desde la parte más alta de la persona hasta el margen
+            smartCropRect.size.height = uiSubjectRect.height * 0.55
+        case .bottom:
+            smartCropRect.origin.y += uiSubjectRect.height * 0.35
+            smartCropRect.size.height = uiSubjectRect.height * 0.55
+        case .shoes:
+            smartCropRect.origin.y += uiSubjectRect.height * 0.80
+            smartCropRect.size.height = uiSubjectRect.height * 0.20
+        default: break
+        }
+        
+        // Añadir 5% de margen (padding)
+        let paddingX = smartCropRect.width * 0.05
+        let paddingY = smartCropRect.height * 0.05
+        let paddedRect = smartCropRect.insetBy(dx: -paddingX, dy: -paddingY)
+        let finalRect = paddedRect.intersection(CGRect(origin: .zero, size: size)) // No salirse
+        
+        // 4. Recorte definitivo
+        let formatFinal = UIGraphicsImageRendererFormat()
+        formatFinal.opaque = false
+        formatFinal.scale = image.scale
+        let finalCropped = UIGraphicsImageRenderer(size: finalRect.size, format: formatFinal).image { _ in
+            let drawRect = CGRect(
+                x: -finalRect.origin.x,
+                y: -finalRect.origin.y,
+                width: size.width,
+                height: size.height
+            )
+            isolatedImage.draw(in: drawRect)
+        }
+
+        DebugLogger.shared.log("✂️ VisionAI: True Cropped \(type.label) via Alpha Mask: \(Int(finalRect.width))×\(Int(finalRect.height))", level: .info)
+        return finalCropped
     }
 
     /// Generates a square thumbnail of the given size.
