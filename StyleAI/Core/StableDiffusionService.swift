@@ -463,7 +463,11 @@ final class StableDiffusionService {
     /// Resizes an image to 512×512 (SD 2.1 native resolution).
     private func resizeTo512(_ image: UIImage) -> CGImage? {
         let size = CGSize(width: 512, height: 512)
-        let renderer = UIGraphicsImageRenderer(size: size)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0 // CRITICAL: Force 1x scale, otherwise Retina adds @3x (1536) and crashes CoreML
+        format.opaque = true
+        
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let resized = renderer.image { _ in
             image.draw(in: CGRect(origin: .zero, size: size))
         }
@@ -472,7 +476,9 @@ final class StableDiffusionService {
 
     /// Scales a generated image back to match the target's dimensions.
     private func scaleToMatch(_ generated: UIImage, target: UIImage) -> UIImage {
-        let renderer = UIGraphicsImageRenderer(size: target.size)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = target.scale
+        let renderer = UIGraphicsImageRenderer(size: target.size, format: format)
         return renderer.image { _ in
             generated.draw(in: CGRect(origin: .zero, size: target.size))
         }

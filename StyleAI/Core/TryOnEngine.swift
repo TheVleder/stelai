@@ -278,7 +278,9 @@ final class TryOnEngine {
         imageSize: CGSize,
         outfit: OutfitSelection
     ) -> UIImage {
-        let renderer = UIGraphicsImageRenderer(size: imageSize)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0
+        let renderer = UIGraphicsImageRenderer(size: imageSize, format: format)
         return renderer.image { ctx in
             let cgContext = ctx.cgContext
             let width = imageSize.width
@@ -352,7 +354,9 @@ final class TryOnEngine {
         personMask: CGImage?
     ) async -> UIImage? {
         let size = photo.size
-        let renderer = UIGraphicsImageRenderer(size: size)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
 
         return renderer.image { context in
             let cgContext = context.cgContext
