@@ -300,7 +300,7 @@ final class TryOnEngine {
 
         let request = VNDetectHumanBodyPoseRequest()
         let handler = VNImageRequestHandler(cgImage: cgImage,
-                                            orientation: visionOrientation(from: image),
+                                            orientation: TryOnEngine.visionOrientation(from: image),
                                             options: [:])
         do { try handler.perform([request]) } catch { return nil }
         guard let obs = request.results?.first else { return nil }
