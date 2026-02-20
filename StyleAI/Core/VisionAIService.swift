@@ -324,7 +324,7 @@ final class VisionAIService {
         if let result = cropUsingBodyPose(image: image, type: type) {
             return result
         }
-        DebugLogger.shared.log("\u26a0\ufe0f VisionAI: Body pose not detected, using proportional fallback for \(type.label)", level: .warning)
+        DebugLogger.shared.log("⚠️ VisionAI: Body pose not detected, using proportional fallback for \(type.label)", level: .warning)
         return cropFallback(image: image, type: type)
     }
 
@@ -336,7 +336,7 @@ final class VisionAIService {
         let request = VNDetectHumanBodyPoseRequest()
         let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
         do { try handler.perform([request]) } catch {
-            DebugLogger.shared.log("\u274c VisionAI: Pose request error: \(error.localizedDescription)", level: .error)
+            DebugLogger.shared.log("❌ VisionAI: Pose request error: \(error.localizedDescription)", level: .error)
             return nil
         }
         guard let obs = request.results?.first else { return nil }
@@ -406,7 +406,7 @@ final class VisionAIService {
             image.draw(in: CGRect(x: -clamped.origin.x, y: -clamped.origin.y,
                                   width: size.width, height: size.height))
         }
-        DebugLogger.shared.log("\u2705 VisionAI: Body-pose crop [\(type.label)] \(Int(clamped.width))\u00d7\(Int(clamped.height))px", level: .success)
+        DebugLogger.shared.log("✅ VisionAI: Body-pose crop [\(type.label)] \(Int(clamped.width))×\(Int(clamped.height))px", level: .success)
         return cropped
     }
 
