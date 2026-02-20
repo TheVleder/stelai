@@ -278,7 +278,7 @@ final class StableDiffusionService {
         personImage: UIImage,
         mask: UIImage,
         prompt: String,
-        negativePrompt: String = "deformed, blurry, bad anatomy, extra limbs, watermark, text",
+        negativePrompt: String = "deformed, blurry, bad anatomy, extra limbs, watermark, text, signature, ugly, duplicate, mutated hands, poorly drawn face, out of frame, clipping, bad proportions, floating objects, naked, nude, nsfw, disfigured",
         seed: UInt32 = .random(in: 0...UInt32.max),
         steps: Int = 20,
         guidanceScale: Float = 7.5

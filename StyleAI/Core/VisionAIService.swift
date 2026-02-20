@@ -315,142 +315,125 @@ final class VisionAIService {
         return Array(tags).sorted()
     }
 
-    // MARK: - Garment Cropping
+    // MARK: - Garment Cropping (Body Pose AI)
 
-    /// Crops a garment region from a full-body photo based on the detected garment type.
-    ///
-    /// Uses vertical body zone proportions:
-    /// - **Top**: upper 50% of image
-    /// - **Bottom**: middle 35% (from 35% to 70%)
-    /// - **Shoes**: lower 30% (from 70% to 100%)
-    /// - **Other**: full image
-    ///
-    /// - Parameters:
-    ///   - image: The full-body or garment photo.
-    ///   - type: The detected garment type.
-    /// - Returns: A cropped `UIImage` of the garment region.
-    func cropSmartGarmentRegion(from image: UIImage, type: GarmentType, personMask: CGImage?) -> UIImage {
+    /// Crops the garment region from a photo using real body skeleton keypoints.
+    /// Uses `VNHumanBodyPoseRequest` to locate shoulders, hips, knees, ankles exactly.
+    /// Falls back to proportional crop only if pose detection fails.
+    func cropSmartGarmentRegion(from image: UIImage, type: GarmentType, personMask: CGImage? = nil) -> UIImage {
+        if let result = cropUsingBodyPose(image: image, type: type) {
+            return result
+        }
+        DebugLogger.shared.log("\u26a0\ufe0f VisionAI: Body pose not detected, using proportional fallback for \(type.label)", level: .warning)
+        return cropFallback(image: image, type: type)
+    }
+
+    /// Uses VNHumanBodyPoseRequest to find skeleton joints and crop the garment zone.
+    private func cropUsingBodyPose(image: UIImage, type: GarmentType) -> UIImage? {
+        guard let cgImage = image.cgImage else { return nil }
         let size = image.size
-        
-        // 1. Aplica la máscara Alpha para aislar SOLO a la persona / tela del fondo
-        let isolatedImage: UIImage
-        if let mask = personMask {
-            let format = UIGraphicsImageRendererFormat()
-            format.opaque = false
-            format.scale = image.scale
-            isolatedImage = UIGraphicsImageRenderer(size: size, format: format).image { ctx in
-                let cgContext = ctx.cgContext
-                let fullRect = CGRect(origin: .zero, size: size)
-                
-                cgContext.saveGState()
-                // Invertimos coordenadas para la máscara CoreGraphics
-                cgContext.translateBy(x: 0, y: size.height)
-                cgContext.scaleBy(x: 1.0, y: -1.0)
-                cgContext.clip(to: fullRect, mask: mask)
-                cgContext.scaleBy(x: 1.0, y: -1.0)
-                cgContext.translateBy(x: 0, y: -size.height)
-                
-                image.draw(in: fullRect)
-                cgContext.restoreGState()
-            }
-        } else {
-            isolatedImage = image
+
+        let request = VNDetectHumanBodyPoseRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        do { try handler.perform([request]) } catch {
+            DebugLogger.shared.log("\u274c VisionAI: Pose request error: \(error.localizedDescription)", level: .error)
+            return nil
+        }
+        guard let obs = request.results?.first else { return nil }
+
+        // Convert Vision normalized point (y flipped) to UIKit image coords
+        func pt(_ joint: VNHumanBodyPoseObservation.JointName) -> CGPoint? {
+            guard let p = try? obs.recognizedPoint(joint), p.confidence > 0.25 else { return nil }
+            return CGPoint(x: p.location.x * size.width,
+                           y: (1.0 - p.location.y) * size.height)
         }
 
-        // 2. Extraer Bounding Box de la ropa (Píxeles no transparentes) usando CoreGraphics
-        guard let cgIsolated = isolatedImage.cgImage else { return isolatedImage }
-        let width = cgIsolated.width
-        let height = cgIsolated.height
-        let colorSpace = CGColorSpaceCreateDeviceGray()
-        let bitmapInfo = CGImageAlphaInfo.alphaOnly.rawValue
-        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width, space: colorSpace, bitmapInfo: bitmapInfo) else {
-            return isolatedImage
+        func avgY(_ a: CGPoint?, _ b: CGPoint?) -> CGFloat? {
+            let ys = [a, b].compactMap { $0?.y }
+            return ys.isEmpty ? nil : ys.reduce(0, +) / CGFloat(ys.count)
         }
-        
-        context.draw(cgIsolated, in: CGRect(x: 0, y: 0, width: width, height: height))
-        guard let data = context.data else { return isolatedImage }
-        let buffer = data.bindMemory(to: UInt8.self, capacity: width * height)
-        
-        var minX = width
-        var maxX = 0
-        var minY = height
-        var maxY = 0
-        var foundAlpha = false
-        
-        // Scan alpha channel to find true bounding box
-        for y in 0..<height {
-            let rowOffset = y * width
-            for x in 0..<width {
-                if buffer[rowOffset + x] > 10 { // Threshold for visibility
-                    if x < minX { minX = x }
-                    if x > maxX { maxX = x }
-                    if y < minY { minY = y }
-                    if y > maxY { maxY = y }
-                    foundAlpha = true
-                }
-            }
-        }
-        
-        let subjectRect: CGRect
-        if foundAlpha {
-            // Convert to logical coordinates
-            let scale = image.scale
-            subjectRect = CGRect(
-                x: CGFloat(minX) / scale,
-                y: CGFloat(minY) / scale, // CoreGraphics coordinates (y=0 is bottom) so it's vertically flipped, we'll handle below
-                width: CGFloat(maxX - minX) / scale,
-                height: CGFloat(maxY - minY) / scale
-            )
-        } else {
-            subjectRect = CGRect(origin: .zero, size: size)
-        }
+        func leftX(_ pts: [CGPoint?]) -> CGFloat  { pts.compactMap { $0?.x }.min() ?? size.width * 0.05 }
+        func rightX(_ pts: [CGPoint?]) -> CGFloat { pts.compactMap { $0?.x }.max() ?? size.width * 0.95 }
 
-        // 3. Cruzar True Bounding Box con el tipo de prenda
-        // Como y=0 era abajo al dibujar en CGContext gris, la zona visual "top" corresponde a la Y más alta del scan.
-        // Convertimos a coordenadas UI (y=0 arriba)
-        let uiSubjectY = size.height - subjectRect.maxY
-        let uiSubjectRect = CGRect(x: subjectRect.minX, y: uiSubjectY, width: subjectRect.width, height: subjectRect.height)
-        
-        var smartCropRect = uiSubjectRect
-        
+        let neck = pt(.neck)
+        let lShoulder = pt(.leftShoulder);  let rShoulder = pt(.rightShoulder)
+        let lHip = pt(.leftHip);            let rHip = pt(.rightHip)
+        let lKnee = pt(.leftKnee);          let rKnee = pt(.rightKnee)
+        let lAnkle = pt(.leftAnkle);        let rAnkle = pt(.rightAnkle)
+        let lWrist = pt(.leftWrist);        let rWrist = pt(.rightWrist)
+
+        let pad: CGFloat = 24
+        let cropRect: CGRect
+
         switch type {
         case .top, .outerwear:
-            // Skip the head (roughly top 15% of the person's bounding box)
-            smartCropRect.origin.y += uiSubjectRect.height * 0.15
-            smartCropRect.size.height = uiSubjectRect.height * 0.45
+            guard let shoulderY = avgY(lShoulder, rShoulder),
+                  let hipY = avgY(lHip, rHip) else { return nil }
+            let top    = (neck?.y ?? shoulderY) - pad
+            let bottom = hipY + pad
+            let left   = leftX([lShoulder, lWrist, lHip]) - pad
+            let right  = rightX([rShoulder, rWrist, rHip]) + pad
+            cropRect = CGRect(x: left, y: top, width: right - left, height: bottom - top)
+
         case .bottom:
-            // Waist to ankle (from 40% to 90%)
-            smartCropRect.origin.y += uiSubjectRect.height * 0.40
-            smartCropRect.size.height = uiSubjectRect.height * 0.50
+            guard let hipY = avgY(lHip, rHip),
+                  let ankleY = avgY(lAnkle, rAnkle) else { return nil }
+            let top    = hipY - pad
+            let bottom = ankleY + pad
+            let left   = leftX([lHip, lKnee, lAnkle]) - pad
+            let right  = rightX([rHip, rKnee, rAnkle]) + pad
+            cropRect = CGRect(x: left, y: top, width: right - left, height: bottom - top)
+
         case .shoes:
-            // Bottom 15%
-            smartCropRect.origin.y += uiSubjectRect.height * 0.85
-            smartCropRect.size.height = uiSubjectRect.height * 0.15
-        default: break
-        }
-        
-        // Añadir 5% de margen (padding)
-        let paddingX = smartCropRect.width * 0.05
-        let paddingY = smartCropRect.height * 0.05
-        let paddedRect = smartCropRect.insetBy(dx: -paddingX, dy: -paddingY)
-        let finalRect = paddedRect.intersection(CGRect(origin: .zero, size: size)) // No salirse
-        
-        // 4. Recorte definitivo
-        let formatFinal = UIGraphicsImageRendererFormat()
-        formatFinal.opaque = false
-        formatFinal.scale = image.scale
-        let finalCropped = UIGraphicsImageRenderer(size: finalRect.size, format: formatFinal).image { _ in
-            let drawRect = CGRect(
-                x: -finalRect.origin.x,
-                y: -finalRect.origin.y,
-                width: size.width,
-                height: size.height
-            )
-            isolatedImage.draw(in: drawRect)
+            guard let ankleY = avgY(lAnkle, rAnkle) else { return nil }
+            let kneeY = avgY(lKnee, rKnee) ?? (ankleY - size.height * 0.12)
+            let top    = kneeY - pad
+            let bottom = min(ankleY + size.height * 0.08 + pad, size.height)
+            let left   = leftX([lAnkle, lKnee]) - pad
+            let right  = rightX([rAnkle, rKnee]) + pad
+            cropRect = CGRect(x: left, y: top, width: right - left, height: bottom - top)
+
+        default:
+            return nil
         }
 
-        DebugLogger.shared.log("✂️ VisionAI: True Cropped \(type.label) via Alpha Mask: \(Int(finalRect.width))×\(Int(finalRect.height))", level: .info)
-        return finalCropped
+        let clamped = cropRect.intersection(CGRect(origin: .zero, size: size))
+        guard clamped.width > 10 && clamped.height > 10 else { return nil }
+
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.opaque = true; fmt.scale = image.scale
+        let cropped = UIGraphicsImageRenderer(size: clamped.size, format: fmt).image { _ in
+            image.draw(in: CGRect(x: -clamped.origin.x, y: -clamped.origin.y,
+                                  width: size.width, height: size.height))
+        }
+        DebugLogger.shared.log("\u2705 VisionAI: Body-pose crop [\(type.label)] \(Int(clamped.width))\u00d7\(Int(clamped.height))px", level: .success)
+        return cropped
+    }
+
+    /// Proportional fallback used when body pose is not detectable.
+    private func cropFallback(image: UIImage, type: GarmentType) -> UIImage {
+        let size = image.size
+        let cropRect: CGRect
+        switch type {
+        case .top, .outerwear:
+            cropRect = CGRect(x: size.width * 0.02, y: size.height * 0.15,
+                              width: size.width * 0.96, height: size.height * 0.43)
+        case .bottom:
+            cropRect = CGRect(x: size.width * 0.05, y: size.height * 0.50,
+                              width: size.width * 0.90, height: size.height * 0.40)
+        case .shoes:
+            cropRect = CGRect(x: size.width * 0.10, y: size.height * 0.82,
+                              width: size.width * 0.80, height: size.height * 0.18)
+        default: return image
+        }
+        let c = cropRect.intersection(CGRect(origin: .zero, size: size))
+        guard c.width > 0 && c.height > 0 else { return image }
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.opaque = true; fmt.scale = image.scale
+        return UIGraphicsImageRenderer(size: c.size, format: fmt).image { _ in
+            image.draw(in: CGRect(x: -c.origin.x, y: -c.origin.y,
+                                  width: size.width, height: size.height))
+        }
     }
 
     /// Generates a square thumbnail of the given size.
