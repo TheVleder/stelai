@@ -368,7 +368,9 @@ final class VisionAIService {
         let lAnkle = pt(.leftAnkle);        let rAnkle = pt(.rightAnkle)
         let lWrist = pt(.leftWrist);        let rWrist = pt(.rightWrist)
 
-        let pad: CGFloat = 24
+        // Use full torso width (from 5% to 95% of image) to avoid cropping sleeves/outlines
+        let safeLeft = size.width * 0.05
+        let safeRight = size.width * 0.95
         let cropRect: CGRect
 
         switch type {
@@ -377,27 +379,21 @@ final class VisionAIService {
                   let hipY = avgY(lHip, rHip) else { return nil }
             let top    = (neck?.y ?? shoulderY) - pad
             let bottom = hipY + pad
-            let left   = leftX([lShoulder, lWrist, lHip]) - pad
-            let right  = rightX([rShoulder, rWrist, rHip]) + pad
-            cropRect = CGRect(x: left, y: top, width: right - left, height: bottom - top)
+            cropRect = CGRect(x: safeLeft, y: top, width: safeRight - safeLeft, height: bottom - top)
 
         case .bottom:
             guard let hipY = avgY(lHip, rHip),
                   let ankleY = avgY(lAnkle, rAnkle) else { return nil }
             let top    = hipY - pad
             let bottom = ankleY + pad
-            let left   = leftX([lHip, lKnee, lAnkle]) - pad
-            let right  = rightX([rHip, rKnee, rAnkle]) + pad
-            cropRect = CGRect(x: left, y: top, width: right - left, height: bottom - top)
+            cropRect = CGRect(x: safeLeft, y: top, width: safeRight - safeLeft, height: bottom - top)
 
         case .shoes:
             guard let ankleY = avgY(lAnkle, rAnkle) else { return nil }
-            let kneeY = avgY(lKnee, rKnee) ?? (ankleY - size.height * 0.12)
+            let kneeY = avgY(lKnee, rKnee) ?? (ankleY - size.height * 0.15)
             let top    = kneeY - pad
-            let bottom = min(ankleY + size.height * 0.08 + pad, size.height)
-            let left   = leftX([lAnkle, lKnee]) - pad
-            let right  = rightX([rAnkle, rKnee]) + pad
-            cropRect = CGRect(x: left, y: top, width: right - left, height: bottom - top)
+            let bottom = min(ankleY + size.height * 0.10 + pad, size.height)
+            cropRect = CGRect(x: safeLeft, y: top, width: safeRight - safeLeft, height: bottom - top)
 
         default:
             return nil

@@ -495,30 +495,28 @@ final class TryOnEngine {
 
         var result: [GarmentSlot: CGRect] = [:]
         let pad: CGFloat = 16
+        
+        // Use full torso width (from 5% to 95% of image) to avoid painting sleeves/outlines as skin
+        let safeLeft = imageSize.width * 0.05
+        let safeRight = imageSize.width * 0.95
 
         if outfit.top != nil, let shY = avgY(lS, rS), let hY = avgY(lH, rH) {
             let top   = (neck?.y ?? shY) - pad
-            let bot   = hY + pad
-            let left  = minX([lS, lW, lH]) - pad
-            let right = maxX([rS, rW, rH]) + pad
-            let r = CGRect(x: left, y: top, width: right-left, height: bot-top)
+            let bot   = hY + pad * 2
+            let r     = CGRect(x: safeLeft, y: top, width: safeRight - safeLeft, height: bot - top)
             result[.top] = r.intersection(CGRect(origin: .zero, size: imageSize))
         }
         if outfit.bottom != nil, let hY = avgY(lH, rH), let aY = avgY(lA, rA) {
             let top   = hY - pad
-            let bot   = aY + pad
-            let left  = minX([lH, lK, lA]) - pad
-            let right = maxX([rH, rK, rA]) + pad
-            let r = CGRect(x: left, y: top, width: right-left, height: bot-top)
+            let bot   = aY + pad * 2
+            let r     = CGRect(x: safeLeft, y: top, width: safeRight - safeLeft, height: bot - top)
             result[.bottom] = r.intersection(CGRect(origin: .zero, size: imageSize))
         }
         if outfit.shoes != nil, let aY = avgY(lA, rA) {
             let kneeY = avgY(lK, rK) ?? (aY - imageSize.height * 0.12)
             let top   = kneeY - pad
             let bot   = min(aY + imageSize.height * 0.08 + pad, imageSize.height)
-            let left  = minX([lA, lK]) - pad
-            let right = maxX([rA, rK]) + pad
-            let r = CGRect(x: left, y: top, width: right-left, height: bot-top)
+            let r     = CGRect(x: safeLeft, y: top, width: safeRight - safeLeft, height: bot - top)
             result[.shoes] = r.intersection(CGRect(origin: .zero, size: imageSize))
         }
         return result
