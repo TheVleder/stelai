@@ -41,6 +41,7 @@ struct TryOnView: View {
     /// Animation states
     // Full screen expansion
     @State private var isFullScreen = false
+    @State private var showSavedFeedback = false
     @State private var photoScale: CGFloat = 1.0
     @State private var isDownloadingSD = false
     @State private var processingRotation: Double = 0
@@ -162,13 +163,13 @@ struct TryOnView: View {
                         .scaleEffect(photoScale) // Kept photoScale as it might be used for other animations
                         .padding(StyleSpacing.lg) // Kept padding as it defines the image's inset
                         .overlay(alignment: .bottomTrailing) {
-                            if !isProcessing {
+                            if !engine.state.isProcessing {
                                 photoOverlayBadges
                                     .padding(StyleSpacing.md)
                             }
                         }
                         .overlay(alignment: .topTrailing) {
-                            if !isProcessing {
+                            if !engine.state.isProcessing {
                                 Image(systemName: "arrows.out")
                                     .font(.system(size: 14, weight: .bold))
                                     .foregroundStyle(.white.opacity(0.8))
@@ -196,6 +197,7 @@ struct TryOnView: View {
         }
     }
 
+    @MainActor
     private func photoPlaceholder(size: CGSize) -> some View {
         PhotosPicker(selection: $photoPickerItem, matching: .images) {
             VStack(spacing: StyleSpacing.xl) {
@@ -842,7 +844,7 @@ struct TryOnView: View {
     private func fullScreenImageOverlay(image: UIImage) -> some View {
         ZStack {
             Color.black
-                .opacity(max(0, 1.0 - abs(dragOffset.height) / 500))
+                .opacity(max(CGFloat(0), CGFloat(1.0) - (abs(dragOffset.height) / CGFloat(500))))
                 .ignoresSafeArea()
 
             Image(uiImage: image)
