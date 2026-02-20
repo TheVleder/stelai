@@ -104,6 +104,10 @@ struct TryOnView: View {
             if showSavedFeedback {
                 savedToast
             }
+            // Error overlay
+            if case .error(let msg) = engine.state {
+                errorOverlay(msg: msg)
+            }
         }
         .navigationTitle("Probador Virtual")
         .navigationBarTitleDisplayMode(.inline)
@@ -229,7 +233,7 @@ struct TryOnView: View {
                         HStack(spacing: 4) {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 11))
-                            Text("Generar con IA")
+                            Text(engine.usedStableDiffusion ? "Regenerar Look" : "Generar con IA")
                                 .font(StyleTypography.caption)
                         }
                         .foregroundStyle(.white)
@@ -420,42 +424,86 @@ struct TryOnView: View {
 
     private var aiGenerationOverlay: some View {
         ZStack {
-            Color.black.opacity(0.5)
+            Color.black.opacity(0.65)
                 .ignoresSafeArea()
 
-            VStack(spacing: StyleSpacing.lg) {
-                // Sparkle animation
-                Image(systemName: "sparkles")
-                    .font(.system(size: 36))
-                    .foregroundStyle(StyleColors.brandGradient)
-                    .symbolEffect(.pulse, options: .repeating)
+            VStack(spacing: StyleSpacing.xl) {
+                // Metal iOS 26 Fluid core
+                ZStack {
+                    Circle()
+                        .fill(
+                            AngularGradient(
+                                colors: [StyleColors.brandPink, StyleColors.accentMint, StyleColors.accentGold, StyleColors.brandPink],
+                                center: .center,
+                                startAngle: .degrees(0),
+                                endAngle: .degrees(360)
+                            )
+                        )
+                        .frame(width: 90, height: 90)
+                        .blur(radius: 15)
+                        .rotationEffect(.degrees(processingRotation * 2))
+
+                    Circle()
+                        .strokeBorder(
+                            LinearGradient(colors: [.white.opacity(0.8), .white.opacity(0.1)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                            lineWidth: 1.5
+                        )
+                        .frame(width: 80, height: 80)
+
+                    Image(systemName: "wand.and.stars.inverse")
+                        .font(.system(size: 32, weight: .light))
+                        .foregroundStyle(.white)
+                        .symbolEffect(.pulse, options: .repeating)
+                }
 
                 VStack(spacing: StyleSpacing.sm) {
-                    Text("Generando con IA")
-                        .font(StyleTypography.headline)
+                    Text("Tejiendo píxeles...")
+                        .font(StyleTypography.title3)
                         .foregroundStyle(.white)
 
-                    Text("Stable Diffusion · on-device")
+                    Text("Stable Diffusion · Ajuste Perfecto")
                         .font(StyleTypography.caption)
-                        .foregroundStyle(StyleColors.textSecondary)
+                        .foregroundStyle(StyleColors.textTertiary)
                 }
 
-                // Progress bar
-                VStack(spacing: StyleSpacing.xs) {
-                    ProgressView(value: sdService.generationProgress)
-                        .progressViewStyle(.linear)
-                        .tint(StyleColors.brandPink)
+                // Custom glowing progress bar
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.white.opacity(0.1))
+                            .frame(height: 6)
 
-                    Text("\(Int(sdService.generationProgress * 100))%")
-                        .font(StyleTypography.captionMono)
-                        .foregroundStyle(StyleColors.textSecondary)
+                        Capsule()
+                            .fill(
+                                LinearGradient(colors: [StyleColors.brandPink, StyleColors.accentGold], startPoint: .leading, endPoint: .trailing)
+                            )
+                            .frame(width: max(geo.size.width * CGFloat(sdService.generationProgress), 0), height: 6)
+                            .shadow(color: StyleColors.brandPink.opacity(0.6), radius: 8, x: 0, y: 0)
+                    }
                 }
-                .frame(width: 200)
+                .frame(width: 220, height: 6)
+                .padding(.top, StyleSpacing.sm)
+
+                Text("\(Int(sdService.generationProgress * 100))%")
+                    .font(StyleTypography.captionMono)
+                    .foregroundStyle(StyleColors.textSecondary)
             }
-            .padding(StyleSpacing.xxl)
-            .glassCard(cornerRadius: 20)
+            .padding(40)
+            .background(
+                RoundedRectangle(cornerRadius: 32)
+                    .fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .dark)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 32)
+                    .stroke(
+                        LinearGradient(colors: [.white.opacity(0.4), .white.opacity(0.0)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                        lineWidth: 1.5
+                    )
+            )
+            .shadow(color: .black.opacity(0.3), radius: 30, y: 15)
         }
-        .transition(.opacity)
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
     }
 
     // MARK: - SD Download Overlay
@@ -631,8 +679,12 @@ struct TryOnView: View {
             return
         }
 
-        Task {
-            compositeImage = await engine.applyOutfit(to: photo, outfit: currentOutfit)
+        if sdService.state.isReady {
+            triggerAIGeneration()
+        } else {
+            Task {
+                compositeImage = await engine.applyOutfit(to: photo, outfit: currentOutfit)
+            }
         }
     }
 
@@ -641,7 +693,11 @@ struct TryOnView: View {
         guard let photo = userPhoto, currentOutfit.hasAnySelection else { return }
 
         Task {
-            compositeImage = await engine.generateWithAI(userPhoto: photo, outfit: currentOutfit)
+            if let aiResult = await engine.generateWithAI(userPhoto: photo, outfit: currentOutfit) {
+                compositeImage = aiResult
+            } else {
+                DebugLogger.shared.log("⚠️ VTO AI returned nil, keeping previous view", level: .warning)
+            }
         }
     }
 
@@ -713,6 +769,41 @@ struct TryOnView: View {
                 showSavedFeedback = false
             }
         }
+    }
+
+    // MARK: - Error Overlay
+
+    private func errorOverlay(msg: String) -> some View {
+        ZStack {
+            Color.black.opacity(0.6).ignoresSafeArea()
+            VStack(spacing: StyleSpacing.md) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 40))
+                    .foregroundStyle(StyleColors.brandPink)
+                Text("Error de Try-On")
+                    .font(StyleTypography.headline)
+                    .foregroundStyle(.white)
+                Text(msg)
+                    .font(StyleTypography.caption)
+                    .foregroundStyle(StyleColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding()
+                Button {
+                    engine.clearError()
+                } label: {
+                    Text("Cerrar")
+                        .font(StyleTypography.headline)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(.white.opacity(0.15), in: Capsule())
+                }
+            }
+            .padding(StyleSpacing.xl)
+            .glassCard(cornerRadius: 20)
+            .padding(40)
+        }
+        .transition(.opacity)
     }
 }
 

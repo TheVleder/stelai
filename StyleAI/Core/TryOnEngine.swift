@@ -160,8 +160,15 @@ final class TryOnEngine {
         usedStableDiffusion = false
     }
 
-    /// Whether the last result was generated via Stable Diffusion.
+    /// Whever the last result was generated via Stable Diffusion.
     private(set) var usedStableDiffusion = false
+
+    /// Clears any active error state
+    func clearError() {
+        if case .error = state {
+            state = .idle
+        }
+    }
 
     // MARK: - AI Generation (Stable Diffusion)
 
@@ -199,6 +206,9 @@ final class TryOnEngine {
         let personMask = await VisionAIService.shared.segmentPerson(from: userPhoto)
         usedRealSegmentation = personMask != nil
 
+        // Step 1b: Pre-composite the garments onto the photo (the "pegotes")
+        let compositedImage = await Self.compositeOutfit(onto: userPhoto, outfit: outfit, personMask: personMask) ?? userPhoto
+
         // Step 2: Create zone mask for clothing areas
         let clothingMask = createClothingZoneMask(
             personMask: personMask,
@@ -210,23 +220,25 @@ final class TryOnEngine {
         let prompt = buildClothingPrompt(outfit: outfit)
         DebugLogger.shared.log("🎨 VTO AI: Prompt: \"\(prompt)\"", level: .info)
 
-        // Step 4: Run Stable Diffusion inpainting
+        // Step 4: Run Stable Diffusion inpainting (img2img) on the composited image
         let generated = await StableDiffusionService.shared.generateTryOn(
-            personImage: userPhoto,
+            personImage: compositedImage,
             mask: clothingMask,
             prompt: prompt,
-            steps: 20,
-            guidanceScale: 7.5
+            steps: 25,
+            guidanceScale: 6.5
         )
 
         let elapsed = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
         lastProcessingTimeMs = elapsed
 
         if let generated {
-            resultImage = generated
+            // Step 5: Master blend - Keep original face/background, insert ONLY generated clothing
+            let finalImage = blend(original: userPhoto, generated: generated, mask: clothingMask)
+            resultImage = finalImage
             state = .done
             usedStableDiffusion = true
-            DebugLogger.shared.log("✅ VTO AI: Generated in \(elapsed)ms", level: .success)
+            DebugLogger.shared.log("✅ VTO AI: Generated and blended cleanly in \(elapsed)ms", level: .success)
         } else {
             state = .error(message: "La generación con IA falló. Intenta de nuevo.")
             DebugLogger.shared.log("❌ VTO AI: Generation failed after \(elapsed)ms", level: .error)
@@ -505,5 +517,39 @@ final class TryOnEngine {
                 x += dotSpacing + CGFloat.random(in: -2...2)
             }
         }
+    }
+
+    // MARK: - Blending Mask
+
+    /// Blends the AI-generated clothing back onto the original photo perfectly preserving the face/background.
+    private func blend(original: UIImage, generated: UIImage, mask: UIImage) -> UIImage {
+        let context = CIContext(options: nil)
+        
+        guard let origCI = CIImage(image: original),
+              let genCI = CIImage(image: generated),
+              let maskCI = CIImage(image: mask) else {
+            return generated
+        }
+        
+        // Scale generated and mask if sizes differ slightly due to ML
+        let scaleGenX = origCI.extent.width / genCI.extent.width
+        let scaleGenY = origCI.extent.height / genCI.extent.height
+        let scaledGen = genCI.transformed(by: CGAffineTransform(scaleX: scaleGenX, y: scaleGenY))
+        
+        let scaleMaskX = origCI.extent.width / maskCI.extent.width
+        let scaleMaskY = origCI.extent.height / maskCI.extent.height
+        let scaledMask = maskCI.transformed(by: CGAffineTransform(scaleX: scaleMaskX, y: scaleMaskY))
+        
+        let filter = CIFilter.blendWithMask()
+        filter.inputImage = scaledGen // Foreground (AI clothing)
+        filter.backgroundImage = origCI // Background (Original photo)
+        filter.maskImage = scaledMask // Mask: white = foreground, black = background
+        
+        if let output = filter.outputImage,
+           let cgImage = context.createCGImage(output, from: origCI.extent) {
+            return UIImage(cgImage: cgImage, scale: original.scale, orientation: original.imageOrientation)
+        }
+        
+        return generated
     }
 }

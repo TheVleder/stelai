@@ -299,7 +299,10 @@ final class StableDiffusionService {
         do {
             let inputCGImage = resizeTo512(personImage)
             let maskCGImage = resizeTo512(mask)
-            _ = maskCGImage // Reserved for future inpainting support
+            
+            guard let validStartingImage = inputCGImage else {
+                throw StableDiffusionError.generationFailed("No se pudo procesar la foto de entrada (inputCGImage == nil)")
+            }
 
             // Build SD configuration
             var sdConfig = StableDiffusionPipeline.Configuration(prompt: prompt)
@@ -307,8 +310,8 @@ final class StableDiffusionService {
             sdConfig.seed = seed
             sdConfig.stepCount = steps
             sdConfig.guidanceScale = guidanceScale
-            sdConfig.startingImage = inputCGImage
-            sdConfig.strength = 0.75 // How much to repaint (0.75 = strong clothing change)
+            sdConfig.startingImage = validStartingImage
+            sdConfig.strength = 0.45 // Lower strength perfectly refines the "pegote" preserving design
             sdConfig.schedulerType = .dpmSolverMultistepScheduler
 
             // Run the pipeline on a background thread

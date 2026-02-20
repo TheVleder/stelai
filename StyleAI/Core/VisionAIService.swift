@@ -329,7 +329,7 @@ final class VisionAIService {
     ///   - image: The full-body or garment photo.
     ///   - type: The detected garment type.
     /// - Returns: A cropped `UIImage` of the garment region.
-    func cropGarmentRegion(from image: UIImage, type: GarmentType) -> UIImage {
+    func cropSmartGarmentRegion(from image: UIImage, type: GarmentType, personMask: CGImage?) -> UIImage {
         let size = image.size
 
         let cropRect: CGRect
@@ -350,16 +350,43 @@ final class VisionAIService {
             return image
         }
 
-        // Perform the crop
-        guard let cgImage = image.cgImage,
-              let croppedCG = cgImage.cropping(to: cropRect) else {
-            DebugLogger.shared.log("⚠️ VisionAI: Crop failed for \(type.label)", level: .warning)
-            return image
+        // Use UIGraphicsImageRenderer to crop and apply mask cleanly
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale = image.scale
+
+        let renderer = UIGraphicsImageRenderer(size: cropRect.size, format: format)
+        let croppedImage = renderer.image { ctx in
+            let cgContext = ctx.cgContext
+            
+            // Calculate where to draw the full image so the target rect lands at (0,0)
+            let drawRect = CGRect(x: -cropRect.origin.x, y: -cropRect.origin.y, width: size.width, height: size.height)
+
+            // If we have a mask, apply it
+            if let mask = personMask {
+                cgContext.saveGState()
+                
+                // CoreGraphics clipping mask needs to be translated properly
+                // Flip coordinates for mask
+                cgContext.translateBy(x: 0, y: cropRect.size.height)
+                cgContext.scaleBy(x: 1.0, y: -1.0)
+                
+                let maskRect = CGRect(x: -cropRect.origin.x, y: -(size.height - cropRect.maxY), width: size.width, height: size.height)
+                cgContext.clip(to: maskRect, mask: mask)
+                
+                // Restore transform for drawing image
+                cgContext.scaleBy(x: 1.0, y: -1.0)
+                cgContext.translateBy(x: 0, y: -cropRect.size.height)
+                
+                image.draw(in: drawRect)
+                cgContext.restoreGState()
+            } else {
+                image.draw(in: drawRect)
+            }
         }
 
-        let cropped = UIImage(cgImage: croppedCG, scale: image.scale, orientation: image.imageOrientation)
-        DebugLogger.shared.log("✂️ VisionAI: Cropped \(type.label) region: \(Int(cropRect.width))×\(Int(cropRect.height))", level: .info)
-        return cropped
+        DebugLogger.shared.log("✂️ VisionAI: Smart Cropped \(type.label) region: \(Int(cropRect.width))×\(Int(cropRect.height))", level: .info)
+        return croppedImage
     }
 
     /// Generates a square thumbnail of the given size.

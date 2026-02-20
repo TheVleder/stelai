@@ -424,32 +424,33 @@ struct ScannerView: View {
 
         let visionAI = VisionAIService.shared
 
+        // Get the person's mask to cleanly separate the background
+        let personMask = await visionAI.segmentPerson(from: image)
+
         // Step 1: Classify the image to detect what type of garment it is
         let classification = await visionAI.classifyGarment(image)
 
         // Step 2: Determine which garment types to extract
-        // For a full-body photo, we try to extract all 3 regions
-        // For a close-up garment photo, we extract just the detected type
         let typesToExtract: [GarmentType]
 
-        if let classification {
+        if personMask != nil {
+            // User uploaded a photo of themselves — extract the full outfit
+            typesToExtract = [.top, .bottom, .shoes]
+        } else if let classification {
             let detected = classification.suggestedType
 
-            // If it's a full-body photo or generic, extract all 3 slots
             if detected == .fullBody || detected == .accessory {
                 typesToExtract = [.top, .bottom, .shoes]
             } else {
-                // Single garment detected — just crop that region
                 typesToExtract = [detected]
             }
         } else {
-            // No classification → assume full outfit, extract all 3
             typesToExtract = [.top, .bottom, .shoes]
         }
 
         // Step 3: For each type, crop + create garment
         for type in typesToExtract {
-            let cropped = visionAI.cropGarmentRegion(from: image, type: type)
+            let cropped = visionAI.cropSmartGarmentRegion(from: image, type: type, personMask: personMask)
             let thumbnail = visionAI.generateThumbnail(from: cropped)
 
             // Classify the cropped region for better accuracy
