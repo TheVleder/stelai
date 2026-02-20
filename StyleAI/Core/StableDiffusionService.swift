@@ -311,7 +311,7 @@ final class StableDiffusionService {
             sdConfig.stepCount = steps
             sdConfig.guidanceScale = guidanceScale
             sdConfig.startingImage = validStartingImage
-            sdConfig.strength = 0.45 // Lower strength perfectly refines the "pegote" preserving design
+            sdConfig.strength = 0.42 // Lower strength (0.42) perfectly refines the "pegote" preserving design and increasing realism
             sdConfig.schedulerType = .dpmSolverMultistepScheduler
 
             // Run the pipeline on a background thread

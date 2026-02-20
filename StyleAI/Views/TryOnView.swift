@@ -39,7 +39,8 @@ struct TryOnView: View {
     @State private var compositeImage: UIImage?
 
     /// Animation states
-    @State private var showSavedFeedback = false
+    // Full screen expansion
+    @State private var isFullScreen = false
     @State private var photoScale: CGFloat = 1.0
     @State private var isDownloadingSD = false
     @State private var processingRotation: Double = 0
@@ -104,6 +105,12 @@ struct TryOnView: View {
             if showSavedFeedback {
                 savedToast
             }
+            
+            // Full Screen Overlay
+            if isFullScreen, let image = compositeImage ?? userPhoto {
+                fullScreenImageOverlay(image: image)
+            }
+
             // Error overlay
             if case .error(let msg) = engine.state {
                 errorOverlay(msg: msg)
@@ -151,13 +158,33 @@ struct TryOnView: View {
                         .resizable()
                         .scaledToFit()
                         .clipShape(RoundedRectangle(cornerRadius: 20))
-                        .shadow(color: .black.opacity(0.4), radius: 20, y: 10)
-                        .scaleEffect(photoScale)
-                        .padding(StyleSpacing.lg)
+                        .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
+                        .scaleEffect(photoScale) // Kept photoScale as it might be used for other animations
+                        .padding(StyleSpacing.lg) // Kept padding as it defines the image's inset
                         .overlay(alignment: .bottomTrailing) {
-                            photoOverlayBadges
+                            if !isProcessing {
+                                photoOverlayBadges
+                                    .padding(StyleSpacing.md)
+                            }
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            if !isProcessing {
+                                Image(systemName: "arrows.out")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.8))
+                                    .padding(12)
+                                    .background(.ultraThinMaterial, in: Circle())
+                                    .padding(StyleSpacing.md)
+                            }
                         }
                         .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                        .onTapGesture {
+                            if hasPhoto {
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                    isFullScreen = true
+                                }
+                            }
+                        }
 
                 } else {
                     // Empty state — prompt to select photo
@@ -803,6 +830,96 @@ struct TryOnView: View {
             .glassCard(cornerRadius: 20)
             .padding(40)
         }
+        .transition(.opacity)
+    }
+
+    // MARK: - Full Screen Overlay
+
+    @State private var currentMagnification: CGFloat = 1.0
+    @State private var finalMagnification: CGFloat = 1.0
+    @State private var dragOffset: CGSize = .zero
+
+    private func fullScreenImageOverlay(image: UIImage) -> some View {
+        ZStack {
+            Color.black
+                .opacity(max(0, 1.0 - abs(dragOffset.height) / 500))
+                .ignoresSafeArea()
+
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .scaleEffect(currentMagnification * finalMagnification)
+                .offset(y: dragOffset.height)
+                .gesture(
+                    MagnifyGesture()
+                        .onChanged { value in
+                            currentMagnification = value.magnification
+                        }
+                        .onEnded { value in
+                            withAnimation(.spring()) {
+                                finalMagnification = max(1.0, finalMagnification * value.magnification)
+                                currentMagnification = 1.0
+                                // If scaled down too much, snap back
+                                if finalMagnification < 1.0 { finalMagnification = 1.0 }
+                            }
+                        }
+                )
+                .gesture(
+                    DragGesture()
+                        .onChanged { value in
+                            if finalMagnification == 1.0 {
+                                // Only allow dismiss drag if not zoomed in
+                                dragOffset = value.translation
+                            }
+                        }
+                        .onEnded { value in
+                            if finalMagnification == 1.0 {
+                                if abs(dragOffset.height) > 100 {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        isFullScreen = false
+                                        dragOffset = .zero
+                                    }
+                                } else {
+                                    withAnimation(.spring()) {
+                                        dragOffset = .zero
+                                    }
+                                }
+                            }
+                        }
+                )
+                .onTapGesture(count: 2) {
+                    // Double tap to reset zoom or zoom in
+                    withAnimation(.spring()) {
+                        if finalMagnification > 1.0 {
+                            finalMagnification = 1.0
+                            dragOffset = .zero
+                        } else {
+                            finalMagnification = 2.0
+                        }
+                    }
+                }
+
+            // Overlay controls
+            VStack {
+                HStack {
+                    Spacer()
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            isFullScreen = false
+                            dragOffset = .zero
+                            finalMagnification = 1.0
+                        }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 30))
+                            .foregroundStyle(.white.opacity(0.8))
+                            .padding()
+                    }
+                }
+                Spacer()
+            }
+        }
+        .zIndex(100)
         .transition(.opacity)
     }
 }

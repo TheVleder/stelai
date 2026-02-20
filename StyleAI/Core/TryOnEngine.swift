@@ -225,8 +225,8 @@ final class TryOnEngine {
             personImage: compositedImage,
             mask: clothingMask,
             prompt: prompt,
-            steps: 25,
-            guidanceScale: 6.5
+            steps: 30, // Aumentado de 25 a 30 para mucha mayor textura y calidad
+            guidanceScale: 7.5 // Subido para que haga más caso al diseño original
         )
 
         let elapsed = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
@@ -234,7 +234,8 @@ final class TryOnEngine {
 
         if let generated {
             // Step 5: Master blend - Keep original face/background, insert ONLY generated clothing
-            let finalImage = blend(original: userPhoto, generated: generated, mask: clothingMask)
+            // We use the clothingMask AND the personMask to ensure the AI NEVER draws outside the body
+            let finalImage = blend(original: userPhoto, generated: generated, clothingMask: clothingMask, personMask: personMask)
             resultImage = finalImage
             state = .done
             usedStableDiffusion = true
@@ -265,7 +266,7 @@ final class TryOnEngine {
             parts.append("and \(shoes.name.lowercased())")
         }
 
-        parts.append(", professional fashion photo, studio lighting, high quality, detailed clothing texture")
+        parts.append(", highly detailed raw photograph, 8k resolution, sharp focus, professional fashion photography, studio lighting, hyperrealistic fabric texture, vivid colors, masterpiece, best quality")
 
         return parts.joined(separator: " ")
     }
@@ -300,10 +301,10 @@ final class TryOnEngine {
             cgContext.setFillColor(UIColor.white.cgColor)
 
             if outfit.top != nil {
-                // Upper body: 20% to 50% of height
+                // Upper body: 25% to 55% of height (lowered to protect neck/face)
                 let topRect = CGRect(
                     x: width * 0.1,
-                    y: height * 0.2,
+                    y: height * 0.25,
                     width: width * 0.8,
                     height: height * 0.30
                 )
@@ -382,7 +383,11 @@ final class TryOnEngine {
                 cgContext.saveGState()
 
                 if let mask = personMask {
-                    cgContext.clip(to: garmentRect, mask: mask)
+                    // CRITICAL FIX: The personMask represents the FULL image silhouette.
+                    // If we clip it to garmentRect, the full body gets squashed into the torso box!
+                    // We must clip the mask to the full image, THEN clip to the garment bounding box.
+                    cgContext.clip(to: fullRect, mask: mask)
+                    cgContext.clip(to: garmentRect)
                 } else {
                     let cornerRadius = garmentRect.width * 0.06
                     let clipPath = UIBezierPath(roundedRect: garmentRect, cornerRadius: cornerRadius)
@@ -391,10 +396,20 @@ final class TryOnEngine {
 
                 // === Layer 2: Garment Image or Gradient ===
                 if garment.isFromWardrobe, let thumb = garment.thumbnailImage {
-                    // Real wardrobe garment — draw the actual photo
+                    // Real wardrobe garment — draw the photo scaled to fill without stretching
                     cgContext.setBlendMode(.normal)
-                    cgContext.setAlpha(0.80)
-                    thumb.draw(in: garmentRect)
+                    cgContext.setAlpha(0.85)
+
+                    let aspectWidth = garmentRect.width / thumb.size.width
+                    let aspectHeight = garmentRect.height / thumb.size.height
+                    let scale = max(aspectWidth, aspectHeight) // Aspect Fill
+                    
+                    let drawWidth = thumb.size.width * scale
+                    let drawHeight = thumb.size.height * scale
+                    let drawX = garmentRect.midX - (drawWidth / 2)
+                    let drawY = garmentRect.midY - (drawHeight / 2)
+                    
+                    thumb.draw(in: CGRect(x: drawX, y: drawY, width: drawWidth, height: drawHeight))
                 } else {
                     // Sample garment — subtle color tint only
                     let colors = garment.gradientColors.map { UIColor($0).cgColor } as CFArray
@@ -526,12 +541,14 @@ final class TryOnEngine {
     // MARK: - Blending Mask
 
     /// Blends the AI-generated clothing back onto the original photo perfectly preserving the face/background.
-    private func blend(original: UIImage, generated: UIImage, mask: UIImage) -> UIImage {
+    /// It uses both the zone mask (where clothes are) and the person mask (where the body is) 
+    /// to aggressively restrict AI pixels strictly to the user's silhouette.
+    private func blend(original: UIImage, generated: UIImage, clothingMask: UIImage, personMask: CGImage?) -> UIImage {
         let context = CIContext(options: nil)
         
         guard let origCI = CIImage(image: original),
               let genCI = CIImage(image: generated),
-              let maskCI = CIImage(image: mask) else {
+              let maskCI = CIImage(image: clothingMask) else {
             return generated
         }
         
@@ -542,8 +559,26 @@ final class TryOnEngine {
         
         let scaleMaskX = origCI.extent.width / maskCI.extent.width
         let scaleMaskY = origCI.extent.height / maskCI.extent.height
-        let scaledMask = maskCI.transformed(by: CGAffineTransform(scaleX: scaleMaskX, y: scaleMaskY))
+        var scaledMask = maskCI.transformed(by: CGAffineTransform(scaleX: scaleMaskX, y: scaleMaskY))
         
+        // INTERSECTION: If we have a true person mask, multiply it with the clothing mask
+        // This ensures the AI CANNOT paint fake skin or clothes outside the user's real body silhouette.
+        if let pMaskCG = personMask {
+            let pMaskCI = CIImage(cgImage: pMaskCG)
+            let pScaleX = origCI.extent.width / pMaskCI.extent.width
+            let pScaleY = origCI.extent.height / pMaskCI.extent.height
+            let scaledPMask = pMaskCI.transformed(by: CGAffineTransform(scaleX: pScaleX, y: pScaleY))
+            
+            // Multiply clothing zone * body silhouette = precise clothing pixels
+            let multiplyFilter = CIFilter.multiplyCompositing()
+            multiplyFilter.inputImage = scaledMask
+            multiplyFilter.backgroundImage = scaledPMask
+            if let combo = multiplyFilter.outputImage {
+                scaledMask = combo
+            }
+        }
+        
+        // Master Blend
         let filter = CIFilter.blendWithMask()
         filter.inputImage = scaledGen // Foreground (AI clothing)
         filter.backgroundImage = origCI // Background (Original photo)

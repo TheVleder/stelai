@@ -48,7 +48,7 @@ enum GarmentSlot: String, CaseIterable, Identifiable, Codable, Sendable {
     /// Returns a normalized range (0.0 = top of image, 1.0 = bottom).
     var bodyZone: ClosedRange<CGFloat> {
         switch self {
-        case .top:    return 0.15...0.50
+        case .top:    return 0.23...0.55
         case .bottom: return 0.45...0.78
         case .shoes:  return 0.75...0.95
         }
