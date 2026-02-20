@@ -315,6 +315,7 @@ struct CarouselPickerView: View {
                 }
             }
         }
+    }   // ← closes garmentCard(_:)
 
     // MARK: - Helpers
 
