@@ -388,29 +388,20 @@ final class TryOnEngine {
                     height: size.height * (zone.upperBound - zone.lowerBound)
                 )
 
-                // === Layer 1: Clip to Body Mask (Real AI) ===
+                // === Draw Garment with True Blend Masking ===
                 cgContext.saveGState()
 
-                if let mask = personMask {
-                    // CoreGraphics clipping requires coordinates inversion in iOS
-                    cgContext.translateBy(x: 0, y: size.height)
-                    cgContext.scaleBy(x: 1.0, y: -1.0)
-                    
-                    cgContext.clip(to: fullRect, mask: mask)
-                    
-                    // Revert coordinate inversion for subsequent drawing
-                    cgContext.scaleBy(x: 1.0, y: -1.0)
-                    cgContext.translateBy(x: 0, y: -size.height)
-                    
-                    // Final logical clip to garment area
-                    cgContext.clip(to: garmentRect)
-                } else {
-                    let cornerRadius = garmentRect.width * 0.06
-                    let clipPath = UIBezierPath(roundedRect: garmentRect, cornerRadius: cornerRadius)
-                    clipPath.addClip()
-                }
+                // We use a transparency layer to encapsulate garment + shading. 
+                // We then mask the entire layer using the person's true silhouette.
+                cgContext.beginTransparencyLayer(auxiliaryInfo: nil)
 
-                // === Layer 2: Garment Image or Gradient ===
+                // 1. Initial geometric clip so it doesn't spill over the entire screen 
+                //    (Useful for preventing pants from showing on the chest)
+                let cornerRadius = garmentRect.width * 0.06
+                let clipPath = UIBezierPath(roundedRect: garmentRect, cornerRadius: cornerRadius)
+                clipPath.addClip()
+
+                // === Layer 1: Garment Image or Gradient ===
                 if garment.isFromWardrobe, let thumb = garment.thumbnailImage {
                     // Real wardrobe garment — draw the photo scaled to fill without stretching
                     cgContext.setBlendMode(.normal)
@@ -445,7 +436,7 @@ final class TryOnEngine {
                     }
                 }
 
-                // === Layer 3: Body Curvature (Radial shading) ===
+                // === Layer 2: Body Curvature (Radial shading) ===
                 cgContext.setBlendMode(.softLight)
                 cgContext.setAlpha(0.20)
                 if let bodyGrad = CGGradient(
@@ -467,6 +458,18 @@ final class TryOnEngine {
                     )
                 }
 
+                // === Layer 3: Apply Master AI Silhouette ===
+                // Now we mask everything drawn so far with the person's true silhouette
+                // using destinationIn blend mode. UIImage automatically handles orientation correctly.
+                if let mask = personMask {
+                    let maskImage = UIImage(cgImage: mask)
+                    cgContext.setBlendMode(.destinationIn)
+                    cgContext.setAlpha(1.0)
+                    maskImage.draw(in: fullRect) // Mask the entire composite!
+                }
+
+                // End the layer to compose it over the main photo
+                cgContext.endTransparencyLayer()
                 cgContext.restoreGState()
             }
 

@@ -279,9 +279,7 @@ struct ScannerView: View {
                 }
 
                 // Go to Probador
-                Button {
-                    dismiss()
-                } label: {
+                NavigationLink(destination: TryOnView()) {
                     HStack(spacing: StyleSpacing.md) {
                         Image(systemName: "person.crop.rectangle.stack")
                             .font(.system(size: 18))

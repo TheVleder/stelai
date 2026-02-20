@@ -415,14 +415,17 @@ final class VisionAIService {
         
         switch type {
         case .top, .outerwear:
-            // Aseguramos capturar desde la parte más alta de la persona hasta el margen
-            smartCropRect.size.height = uiSubjectRect.height * 0.55
+            // Skip the head (roughly top 15% of the person's bounding box)
+            smartCropRect.origin.y += uiSubjectRect.height * 0.15
+            smartCropRect.size.height = uiSubjectRect.height * 0.45
         case .bottom:
-            smartCropRect.origin.y += uiSubjectRect.height * 0.35
-            smartCropRect.size.height = uiSubjectRect.height * 0.55
+            // Waist to ankle (from 40% to 90%)
+            smartCropRect.origin.y += uiSubjectRect.height * 0.40
+            smartCropRect.size.height = uiSubjectRect.height * 0.50
         case .shoes:
-            smartCropRect.origin.y += uiSubjectRect.height * 0.80
-            smartCropRect.size.height = uiSubjectRect.height * 0.20
+            // Bottom 15%
+            smartCropRect.origin.y += uiSubjectRect.height * 0.85
+            smartCropRect.size.height = uiSubjectRect.height * 0.15
         default: break
         }
         
