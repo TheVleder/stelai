@@ -43,6 +43,12 @@ struct ContentView: View {
                 .animation(StyleAnimation.springSmooth, value: modelManager.state == .ready)
             }
             .debugConsoleOverlay(isPresented: $showDebugConsole)
+            .overlay(alignment: .bottomLeading) {
+                // Floating iOS 26 style live log button
+                FloatingDebugButtonView(showDebugConsole: $showDebugConsole)
+                    .padding(.bottom, 40)
+                    .padding(.leading, 20)
+            }
         }
         .preferredColorScheme(.dark)
         .task {

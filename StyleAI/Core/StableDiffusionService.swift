@@ -299,9 +299,6 @@ final class StableDiffusionService {
         do {
             // Resize input to 512×512 (SD 2.1 native resolution)
             let inputCGImage = resizeTo512(personImage)
-            let maskCGImage = resizeTo512(mask)
-            _ = maskCGImage // Reserved for future inpainting support
-
             // Build SD configuration
             var sdConfig = StableDiffusionPipeline.Configuration(prompt: prompt)
             sdConfig.negativePrompt = negativePrompt
@@ -309,6 +306,8 @@ final class StableDiffusionService {
             sdConfig.stepCount = steps
             sdConfig.guidanceScale = guidanceScale
             sdConfig.startingImage = inputCGImage
+            // Pass the generated mask so the AI paints ONLY the clothes, leaving the user's face and background untouched
+            sdConfig.maskImage = maskCGImage
             sdConfig.strength = 0.75 // How much to repaint (0.75 = strong clothing change)
             sdConfig.schedulerType = .dpmSolverMultistepScheduler
 
@@ -441,6 +440,7 @@ final class StableDiffusionService {
                 resourcesAt: resourceURL,
                 controlNet: [],
                 configuration: config,
+                disableSafety: true,
                 reduceMemory: true // Critical for iOS — keeps peak RAM manageable
             )
 
