@@ -369,6 +369,7 @@ final class VisionAIService {
         let lWrist = pt(.leftWrist);        let rWrist = pt(.rightWrist)
 
         // Use full torso width (from 5% to 95% of image) to avoid cropping sleeves/outlines
+        let pad: CGFloat = 24
         let safeLeft = size.width * 0.05
         let safeRight = size.width * 0.95
         let cropRect: CGRect
