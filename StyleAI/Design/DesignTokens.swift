@@ -172,6 +172,7 @@ struct PremiumButtonStyle: ButtonStyle {
 
 // MARK: - View Extensions
 
+@MainActor
 extension View {
     /// Apply glassmorphism card styling.
     func glassCard(cornerRadius: CGFloat = StyleSpacing.cardCornerRadius) -> some View {

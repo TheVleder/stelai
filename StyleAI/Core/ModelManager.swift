@@ -267,5 +267,17 @@ final class ModelManager {
         DebugLogger.shared.log("🔄 Reinicializando Vision AI Engine...", level: .warning)
         await bootstrapIfNeeded()
     }
+    
+    // MARK: - Memory Management Helpers
+    
+    private func updateAvailableMemory() {
+        let available = os_proc_available_memory()
+        availableMemoryMB = Int(available / (1024 * 1024))
+    }
+
+    private func handleMemoryWarning() {
+        DebugLogger.shared.log("⚠️ Memory warning received! Unloading models.", level: .warning)
+        unloadAll()
+    }
 
 }
