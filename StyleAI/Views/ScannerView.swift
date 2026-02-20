@@ -22,6 +22,7 @@ struct DetectedGarment: Identifiable {
     let styleTags: [String]
     let dominantColor: String?
     var saved: Bool = false
+    var isSelected: Bool = true  // ← user can deselect before saving
 }
 
 // MARK: - Scanner View
@@ -236,6 +237,13 @@ struct ScannerView: View {
                 Text("\(detectedGarments.count) prenda\(detectedGarments.count == 1 ? "" : "s") detectada\(detectedGarments.count == 1 ? "" : "s")")
                     .font(StyleTypography.headline)
                     .foregroundStyle(.white)
+
+                Spacer()
+
+                // Hint
+                Text("Toca para seleccionar")
+                    .font(StyleTypography.caption)
+                    .foregroundStyle(StyleColors.textSecondary)
             }
 
             // Original photo
@@ -248,14 +256,45 @@ struct ScannerView: View {
                     .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
             }
 
-            // Detected garments grid
-            ForEach(detectedGarments) { garment in
-                detectedGarmentCard(garment)
+            // Detected garments — tappable to toggle selection
+            ForEach(detectedGarments.indices, id: \.self) { i in
+                detectedGarmentCard(index: i)
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.25)) {
+                            detectedGarments[i].isSelected.toggle()
+                        }
+                    }
+            }
+
+            // Save button — only selected garments
+            let selectedCount = detectedGarments.filter { $0.isSelected && !$0.saved }.count
+            if selectedCount > 0 {
+                Button {
+                    Task { await saveSelectedGarments() }
+                } label: {
+                    HStack(spacing: StyleSpacing.md) {
+                        Image(systemName: "tray.and.arrow.down.fill")
+                            .font(.system(size: 18))
+                        Text("Guardar \(selectedCount) prenda\(selectedCount == 1 ? "" : "s")")
+                            .font(StyleTypography.headline)
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, StyleSpacing.lg)
+                    .background(
+                        LinearGradient(
+                            colors: [StyleColors.accentMint, StyleColors.primaryMid],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        ),
+                        in: RoundedRectangle(cornerRadius: StyleSpacing.buttonCornerRadius)
+                    )
+                    .shadow(color: StyleColors.accentMint.opacity(0.3), radius: 12, y: 6)
+                }
             }
 
             // Action buttons
             VStack(spacing: StyleSpacing.md) {
-                // Scan another
                 Button {
                     resetScanner()
                 } label: {
@@ -278,7 +317,6 @@ struct ScannerView: View {
                     )
                 }
 
-                // Go to Probador
                 NavigationLink(destination: TryOnView()) {
                     HStack(spacing: StyleSpacing.md) {
                         Image(systemName: "person.crop.rectangle.stack")
@@ -297,8 +335,12 @@ struct ScannerView: View {
 
     // MARK: - Detected Garment Card
 
-    private func detectedGarmentCard(_ garment: DetectedGarment) -> some View {
-        HStack(spacing: StyleSpacing.lg) {
+    private func detectedGarmentCard(index: Int) -> some View {
+        let garment = detectedGarments[index]
+        let isSelected = garment.isSelected
+        let isSaved = garment.saved
+
+        return HStack(spacing: StyleSpacing.lg) {
             // Cropped garment thumbnail
             Image(uiImage: garment.thumbnail)
                 .resizable()
@@ -307,8 +349,9 @@ struct ScannerView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                        .stroke(isSelected ? StyleColors.accentMint : Color.white.opacity(0.05), lineWidth: isSelected ? 2 : 1)
                 )
+                .opacity(isSelected ? 1.0 : 0.4)
 
             // Info
             VStack(alignment: .leading, spacing: StyleSpacing.xs) {
@@ -320,6 +363,7 @@ struct ScannerView: View {
                     Text(garment.type.label)
                         .font(StyleTypography.headline)
                         .foregroundStyle(.white)
+                        .opacity(isSelected ? 1.0 : 0.4)
                 }
 
                 HStack(spacing: StyleSpacing.sm) {
@@ -334,8 +378,8 @@ struct ScannerView: View {
                             .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 0.5))
                     }
                 }
+                .opacity(isSelected ? 1.0 : 0.4)
 
-                // Tags
                 HStack(spacing: 4) {
                     ForEach(garment.styleTags, id: \.self) { tag in
                         Text(tag)
@@ -346,17 +390,31 @@ struct ScannerView: View {
                             .background(Color.white.opacity(0.06), in: Capsule())
                     }
                 }
+                .opacity(isSelected ? 1.0 : 0.4)
             }
 
             Spacer()
 
-            // Saved indicator
-            Image(systemName: garment.saved ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 20))
-                .foregroundStyle(garment.saved ? .green : StyleColors.textTertiary)
+            // Selection toggle / saved indicator
+            ZStack {
+                if isSaved {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.green)
+                } else {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 24))
+                        .foregroundStyle(isSelected ? StyleColors.accentMint : StyleColors.textTertiary)
+                }
+            }
         }
         .padding(StyleSpacing.md)
         .glassCard()
+        .overlay(
+            RoundedRectangle(cornerRadius: StyleSpacing.cardCornerRadius)
+                .stroke(isSelected ? StyleColors.accentMint.opacity(0.4) : Color.clear, lineWidth: 1.5)
+        )
+        .scaleEffect(isSelected ? 1.0 : 0.97)
     }
 
     // MARK: - Helpers
@@ -477,9 +535,17 @@ struct ScannerView: View {
             detectedGarments.append(detected)
         }
 
-        // Step 4: Auto-save all detected garments to SwiftData
+        savedCount = 0
+        isProcessing = false
+        scanComplete = true
+        // No auto-save — user selects manually
+    }
+
+    /// Saves only the garments the user has selected (isSelected == true).
+    private func saveSelectedGarments() async {
         var saved = 0
         for i in detectedGarments.indices {
+            guard detectedGarments[i].isSelected && !detectedGarments[i].saved else { continue }
             let garment = detectedGarments[i]
 
             guard let imageData = garment.croppedImage.jpegData(compressionQuality: 0.85),
@@ -493,7 +559,6 @@ struct ScannerView: View {
                 dominantColor: garment.dominantColor
             )
             item.thumbnailData = thumbData
-
             modelContext.insert(item)
             detectedGarments[i].saved = true
             saved += 1
@@ -501,24 +566,16 @@ struct ScannerView: View {
 
         do {
             try modelContext.save()
-            DebugLogger.shared.log("✅ Scanner: Auto-saved \(saved) garments", level: .success)
+            DebugLogger.shared.log("✅ Scanner: Saved \(saved) garments", level: .success)
         } catch {
             DebugLogger.shared.log("❌ Scanner: Save failed: \(error.localizedDescription)", level: .error)
         }
 
         savedCount = saved
-        isProcessing = false
-        scanComplete = true
-
-        // Show toast
-        withAnimation(StyleAnimation.springSmooth) {
-            showSavedToast = true
-        }
+        withAnimation(StyleAnimation.springSmooth) { showSavedToast = true }
         Task {
             try? await Task.sleep(for: .seconds(3))
-            withAnimation(StyleAnimation.springSmooth) {
-                showSavedToast = false
-            }
+            withAnimation(StyleAnimation.springSmooth) { showSavedToast = false }
         }
     }
 

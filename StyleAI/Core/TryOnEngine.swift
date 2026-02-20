@@ -299,7 +299,9 @@ final class TryOnEngine {
         guard let cgImage = image.cgImage else { return nil }
 
         let request = VNDetectHumanBodyPoseRequest()
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        let handler = VNImageRequestHandler(cgImage: cgImage,
+                                            orientation: visionOrientation(from: image),
+                                            options: [:])
         do { try handler.perform([request]) } catch { return nil }
         guard let obs = request.results?.first else { return nil }
 
@@ -382,110 +384,158 @@ final class TryOnEngine {
 
     // MARK: - Compositing (Vision AI + Core Graphics)
 
-    /// Creates a visual composite of garments on the user photo.
-    ///
-    /// When a person mask is available (from VNGeneratePersonSegmentationRequest),
-    /// garment overlays are clipped to the actual body silhouette. Each slot
-    /// (top, bottom, shoes) is restricted to its proportional body zone within
-    /// the detected person mask.
-    ///
-    /// Falls back to rectangle-based compositing if no person was detected.
     private static func compositeOutfit(
         onto photo: UIImage,
         outfit: OutfitSelection,
         personMask: CGImage?
     ) async -> UIImage? {
         let size = photo.size
+        let fullRect = CGRect(origin: .zero, size: size)
+
+        // Compute body-pose based garment rects (orientation-aware)
+        let poseRects = computePoseRects(for: outfit, in: size, photo: photo)
+
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1.0
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
 
         return renderer.image { context in
             let cgContext = context.cgContext
-            let fullRect = CGRect(origin: .zero, size: size)
 
-            // Draw the original photo as base
+            // Draw original photo as base
             photo.draw(in: fullRect)
 
-            // Apply each garment overlay
             for slot in GarmentSlot.allCases {
                 guard let garment = outfit.garment(for: slot) else { continue }
 
+                // Use body-pose rect if available, otherwise fall back to bodyZone
                 let zone = slot.bodyZone
                 let insetX: CGFloat = slot == .shoes ? 0.20 : 0.08
-                let garmentRect = CGRect(
+                let fallbackRect = CGRect(
                     x: size.width * insetX,
                     y: size.height * zone.lowerBound,
                     width: size.width * (1.0 - 2 * insetX),
                     height: size.height * (zone.upperBound - zone.lowerBound)
                 )
+                let garmentRect = poseRects[slot] ?? fallbackRect
 
-                // === Composite garment over photo ===
                 cgContext.saveGState()
-
-                // Clip to the garment's slot zone with rounded corners for a clean look
-                let cornerRadius = garmentRect.width * 0.06
-                let clipPath = UIBezierPath(roundedRect: garmentRect, cornerRadius: cornerRadius)
+                let clipPath = UIBezierPath(roundedRect: garmentRect, cornerRadius: garmentRect.width * 0.05)
                 clipPath.addClip()
 
                 if garment.isFromWardrobe, let thumb = garment.thumbnailImage {
-                    // Real wardrobe garment — aspect fill within garmentRect
-                    let aspectWidth = garmentRect.width / thumb.size.width
-                    let aspectHeight = garmentRect.height / thumb.size.height
-                    let fillScale = max(aspectWidth, aspectHeight)
-
-                    let drawWidth = thumb.size.width * fillScale
-                    let drawHeight = thumb.size.height * fillScale
-                    let drawX = garmentRect.midX - drawWidth / 2
-                    let drawY = garmentRect.midY - drawHeight / 2
-
+                    let scaleW = garmentRect.width / thumb.size.width
+                    let scaleH = garmentRect.height / thumb.size.height
+                    let fillScale = max(scaleW, scaleH)
+                    let drawW = thumb.size.width * fillScale
+                    let drawH = thumb.size.height * fillScale
                     thumb.draw(
-                        in: CGRect(x: drawX, y: drawY, width: drawWidth, height: drawHeight),
-                        blendMode: .normal,
-                        alpha: 0.82
+                        in: CGRect(x: garmentRect.midX - drawW / 2,
+                                   y: garmentRect.midY - drawH / 2,
+                                   width: drawW, height: drawH),
+                        blendMode: .normal, alpha: 0.85
                     )
                 } else {
-                    // Sample garment — subtle color gradient overlay
                     cgContext.setBlendMode(.multiply)
                     cgContext.setAlpha(0.28)
                     let colors = garment.gradientColors.map { UIColor($0).cgColor } as CFArray
-                    if let gradient = CGGradient(
-                        colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                        colors: colors,
-                        locations: [0.0, 1.0]
-                    ) {
-                        cgContext.drawLinearGradient(
-                            gradient,
+                    if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                                  colors: colors, locations: [0.0, 1.0]) {
+                        cgContext.drawLinearGradient(gradient,
                             start: CGPoint(x: garmentRect.minX, y: garmentRect.minY),
                             end: CGPoint(x: garmentRect.maxX, y: garmentRect.maxY),
-                            options: []
-                        )
+                            options: [])
                     }
                 }
-
                 cgContext.restoreGState()
             }
 
-            // === Premium Vignette ===
+            // Subtle vignette
             cgContext.saveGState()
-            if let vignetteGradient = CGGradient(
-                colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                colors: [
-                    UIColor.clear.cgColor,
-                    UIColor.black.withAlphaComponent(0.15).cgColor
-                ] as CFArray,
-                locations: [0.55, 1.0]
-            ) {
-                let center = CGPoint(x: size.width / 2, y: size.height / 2)
-                let radius = max(size.width, size.height) / 2
-                cgContext.drawRadialGradient(
-                    vignetteGradient,
-                    startCenter: center, startRadius: 0,
-                    endCenter: center, endRadius: radius,
-                    options: []
-                )
+            if let vig = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                    colors: [UIColor.clear.cgColor,
+                                             UIColor.black.withAlphaComponent(0.12).cgColor] as CFArray,
+                                    locations: [0.55, 1.0]) {
+                let c = CGPoint(x: size.width / 2, y: size.height / 2)
+                let r = max(size.width, size.height) / 2
+                cgContext.drawRadialGradient(vig, startCenter: c, startRadius: 0, endCenter: c, endRadius: r, options: [])
             }
             cgContext.restoreGState()
+        }
+    }
+
+    /// Detects body keypoints from the photo and returns per-slot garment rects.
+    private static func computePoseRects(for outfit: OutfitSelection, in imageSize: CGSize, photo: UIImage) -> [GarmentSlot: CGRect] {
+        guard let cgImg = photo.cgImage else { return [:] }
+
+        let request = VNDetectHumanBodyPoseRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImg,
+                                            orientation: visionOrientation(from: photo),
+                                            options: [:])
+        do { try handler.perform([request]) } catch { return [:] }
+        guard let obs = request.results?.first else { return [:] }
+
+        func pt(_ j: VNHumanBodyPoseObservation.JointName) -> CGPoint? {
+            guard let p = try? obs.recognizedPoint(j), p.confidence > 0.2 else { return nil }
+            return CGPoint(x: p.location.x * imageSize.width,
+                           y: (1.0 - p.location.y) * imageSize.height)
+        }
+        func avgY(_ a: CGPoint?, _ b: CGPoint?) -> CGFloat? {
+            let ys = [a, b].compactMap { $0?.y }; return ys.isEmpty ? nil : ys.reduce(0,+)/CGFloat(ys.count)
+        }
+        func minX(_ pts: [CGPoint?]) -> CGFloat { pts.compactMap{$0?.x}.min() ?? imageSize.width*0.05 }
+        func maxX(_ pts: [CGPoint?]) -> CGFloat { pts.compactMap{$0?.x}.max() ?? imageSize.width*0.95 }
+
+        let neck = pt(.neck)
+        let lS = pt(.leftShoulder);  let rS = pt(.rightShoulder)
+        let lH = pt(.leftHip);       let rH = pt(.rightHip)
+        let lK = pt(.leftKnee);      let rK = pt(.rightKnee)
+        let lA = pt(.leftAnkle);     let rA = pt(.rightAnkle)
+        let lW = pt(.leftWrist);     let rW = pt(.rightWrist)
+
+        var result: [GarmentSlot: CGRect] = [:]
+        let pad: CGFloat = 16
+
+        if outfit.top != nil, let shY = avgY(lS, rS), let hY = avgY(lH, rH) {
+            let top   = (neck?.y ?? shY) - pad
+            let bot   = hY + pad
+            let left  = minX([lS, lW, lH]) - pad
+            let right = maxX([rS, rW, rH]) + pad
+            let r = CGRect(x: left, y: top, width: right-left, height: bot-top)
+            result[.top] = r.intersection(CGRect(origin: .zero, size: imageSize))
+        }
+        if outfit.bottom != nil, let hY = avgY(lH, rH), let aY = avgY(lA, rA) {
+            let top   = hY - pad
+            let bot   = aY + pad
+            let left  = minX([lH, lK, lA]) - pad
+            let right = maxX([rH, rK, rA]) + pad
+            let r = CGRect(x: left, y: top, width: right-left, height: bot-top)
+            result[.bottom] = r.intersection(CGRect(origin: .zero, size: imageSize))
+        }
+        if outfit.shoes != nil, let aY = avgY(lA, rA) {
+            let kneeY = avgY(lK, rK) ?? (aY - imageSize.height * 0.12)
+            let top   = kneeY - pad
+            let bot   = min(aY + imageSize.height * 0.08 + pad, imageSize.height)
+            let left  = minX([lA, lK]) - pad
+            let right = maxX([rA, rK]) + pad
+            let r = CGRect(x: left, y: top, width: right-left, height: bot-top)
+            result[.shoes] = r.intersection(CGRect(origin: .zero, size: imageSize))
+        }
+        return result
+    }
+
+    /// Translates UIImage orientation to CGImagePropertyOrientation for Vision.
+    private static func visionOrientation(from image: UIImage) -> CGImagePropertyOrientation {
+        switch image.imageOrientation {
+        case .up:            return .up
+        case .down:          return .down
+        case .left:          return .left
+        case .right:         return .right
+        case .upMirrored:    return .upMirrored
+        case .downMirrored:  return .downMirrored
+        case .leftMirrored:  return .leftMirrored
+        case .rightMirrored: return .rightMirrored
+        @unknown default:    return .up
         }
     }
 

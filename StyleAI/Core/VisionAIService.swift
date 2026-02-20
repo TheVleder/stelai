@@ -60,7 +60,9 @@ final class VisionAIService {
             request.qualityLevel = .accurate
             request.outputPixelFormat = kCVPixelFormatType_OneComponent8
 
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            let handler = VNImageRequestHandler(cgImage: cgImage,
+                                                orientation: visionOrientation(from: image),
+                                                options: [:])
 
             do {
                 try handler.perform([request])
@@ -113,7 +115,9 @@ final class VisionAIService {
         return await withCheckedContinuation { continuation in
             let request = VNClassifyImageRequest()
 
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            let handler = VNImageRequestHandler(cgImage: cgImage,
+                                                orientation: visionOrientation(from: image),
+                                                options: [:])
 
             do {
                 try handler.perform([request])
@@ -334,7 +338,9 @@ final class VisionAIService {
         let size = image.size
 
         let request = VNDetectHumanBodyPoseRequest()
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        let handler = VNImageRequestHandler(cgImage: cgImage,
+                                            orientation: visionOrientation(from: image),
+                                            options: [:])
         do { try handler.perform([request]) } catch {
             DebugLogger.shared.log("❌ VisionAI: Pose request error: \(error.localizedDescription)", level: .error)
             return nil
@@ -456,6 +462,21 @@ final class VisionAIService {
             )
 
             image.draw(in: CGRect(origin: drawOrigin, size: drawSize))
+        }
+    }
+    /// Translates UIImage orientation to CGImagePropertyOrientation required by Vision.
+    /// Without this, Vision processes rotated raw pixels giving wrong skeleton coordinates.
+    private func visionOrientation(from image: UIImage) -> CGImagePropertyOrientation {
+        switch image.imageOrientation {
+        case .up:            return .up
+        case .down:          return .down
+        case .left:          return .left
+        case .right:         return .right
+        case .upMirrored:    return .upMirrored
+        case .downMirrored:  return .downMirrored
+        case .leftMirrored:  return .leftMirrored
+        case .rightMirrored: return .rightMirrored
+        @unknown default:    return .up
         }
     }
 }

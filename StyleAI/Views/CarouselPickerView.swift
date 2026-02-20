@@ -96,6 +96,7 @@ struct CarouselPickerView: View {
     let slot: GarmentSlot
     let garments: [CarouselGarment]
     @Binding var selection: CarouselGarment?
+    var onDelete: ((CarouselGarment) -> Void)? = nil  // ← callback for deleting wardrobe items
 
     // Internal animation state
     @Namespace private var selectionNamespace
@@ -302,7 +303,18 @@ struct CarouselPickerView: View {
             .animation(StyleAnimation.springSnappy, value: isSelected)
         }
         .buttonStyle(.plain)
-    }
+        .contextMenu {
+            if garment.isFromWardrobe, let onDelete {
+                Button(role: .destructive) {
+                    withAnimation(.spring(response: 0.3)) {
+                        if selection?.id == garment.id { selection = nil }
+                        onDelete(garment)
+                    }
+                } label: {
+                    Label("Eliminar prenda", systemImage: "trash")
+                }
+            }
+        }
 
     // MARK: - Helpers
 

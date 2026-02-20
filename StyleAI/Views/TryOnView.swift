@@ -21,6 +21,8 @@ struct TryOnView: View {
     @State private var engine = TryOnEngine.shared
     @State private var sdService = StableDiffusionService.shared
 
+    @Environment(\.modelContext) private var modelContext
+
     /// SwiftData query for wardrobe items (real scanned garments)
     @Query private var wardrobeItems: [WardrobeItem]
 
@@ -319,19 +321,22 @@ struct TryOnView: View {
                 CarouselPickerView(
                     slot: .top,
                     garments: garments(for: .top),
-                    selection: $selectedTop
+                    selection: $selectedTop,
+                    onDelete: { deleteWardrobeItem($0) }
                 )
 
                 CarouselPickerView(
                     slot: .bottom,
                     garments: garments(for: .bottom),
-                    selection: $selectedBottom
+                    selection: $selectedBottom,
+                    onDelete: { deleteWardrobeItem($0) }
                 )
 
                 CarouselPickerView(
                     slot: .shoes,
                     garments: garments(for: .shoes),
-                    selection: $selectedShoes
+                    selection: $selectedShoes,
+                    onDelete: { deleteWardrobeItem($0) }
                 )
             }
             .padding(.vertical, StyleSpacing.lg)
@@ -934,6 +939,18 @@ struct TryOnView: View {
         }
         .zIndex(100)
         .transition(.opacity)
+    }
+}
+
+// MARK: - Wardrobe Deletion
+
+extension TryOnView {
+    /// Deletes a wardrobe item that corresponds to the given CarouselGarment.
+    func deleteWardrobeItem(_ garment: CarouselGarment) {
+        guard garment.isFromWardrobe else { return }
+        guard let item = wardrobeItems.first(where: { $0.id == garment.id }) else { return }
+        modelContext.delete(item)
+        try? modelContext.save()
     }
 }
 
