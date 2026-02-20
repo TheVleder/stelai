@@ -7,6 +7,9 @@
 
 import SwiftUI
 import UIKit
+import Vision
+import CoreImage
+import CoreImage.CIFilterBuiltins
 
 // MARK: - Try-On State
 
