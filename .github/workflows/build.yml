@@ -68,9 +68,26 @@ jobs:
             ONLY_ACTIVE_ARCH=NO \
             > build.log 2>&1
           rc=$?
-          # Pretty-print succinctly regardless, then surface errors inline.
           xcpretty < build.log || true
+
           if [ $rc -ne 0 ]; then
+            # Render the failure into the run Summary (visible at the top of
+            # the GitHub run page without expanding any step).
+            {
+              echo "## ❌ xcodebuild failed (exit $rc)"
+              echo ""
+              echo "### Every \`error:\` / \`warning:\` line"
+              echo '```'
+              grep -nE "error:|warning:" build.log || echo "(no matches)"
+              echo '```'
+              echo ""
+              echo "### Last 200 lines of \`build.log\`"
+              echo '```'
+              tail -200 build.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            # Also print to step stdout for the in-step view.
             echo ""
             echo "==================================================================="
             echo "❌ xcodebuild exit $rc — every error:/warning: line in build.log:"
@@ -89,10 +106,11 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
+          name: build-log-${{ github.run_attempt }}
           path: build.log
           retention-days: 14
           if-no-files-found: warn
+          overwrite: true
 
       - name: Upload raw build log on failure
         if: failure()
