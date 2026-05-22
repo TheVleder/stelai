@@ -69,6 +69,25 @@ jobs:
             2>&1 | tee build.log | xcpretty
           echo "✅ Build succeeded"
 
+      - name: Surface build errors on failure
+        if: failure()
+        run: |
+          echo "::group::All error: lines from build.log"
+          grep -nE "error:" build.log || echo "(no error: lines found)"
+          echo "::endgroup::"
+          echo "::group::Last 400 lines of build.log"
+          tail -400 build.log || echo "(no build.log)"
+          echo "::endgroup::"
+
+      - name: Upload raw build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 14
+          if-no-files-found: warn
+
       - name: Package Unsigned IPA
         run: |
           mkdir -p build/ipa
