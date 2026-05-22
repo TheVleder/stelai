@@ -54,8 +54,13 @@ jobs:
           echo "✅ Swift packages resolved"
 
       - name: Build for Device (Unsigned)
+        # `bash --noprofile --norc -eo pipefail` is the GitHub default; turning
+        # off -e and pipefail here is critical, otherwise xcodebuild's
+        # non-zero exit kills the script before the diagnostic block runs.
+        shell: bash --noprofile --norc {0}
         run: |
-          set +o pipefail   # let xcpretty fail without nuking the script
+          set +e
+          set +o pipefail
           xcodebuild build \
             -project StyleAI.xcodeproj \
             -scheme StyleAI \
