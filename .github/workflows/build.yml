@@ -71,27 +71,17 @@ jobs:
           xcpretty < build.log || true
 
           if [ $rc -ne 0 ]; then
-            # 1) Emit each Swift error as a GitHub Actions annotation so it
-            #    appears in the Annotations panel without any clicks.
-            #    Swift error format: /path/file.swift:LINE:COL: error: msg
-            grep -E "error: " build.log | while IFS= read -r line; do
-              if [[ "$line" =~ ^([^:]+):([0-9]+):([0-9]+):\ error:\ (.+)$ ]]; then
-                file="${BASH_REMATCH[1]}"
-                ln="${BASH_REMATCH[2]}"
-                col="${BASH_REMATCH[3]}"
-                msg="${BASH_REMATCH[4]}"
-                # Strip the runner workspace prefix so the file is repo-relative
-                rel="${file#${GITHUB_WORKSPACE}/}"
-                # Annotations can't contain raw newlines or %; escape them.
-                msg="${msg//$'\r'/}"
-                msg="${msg//%/%25}"
-                echo "::error file=${rel},line=${ln},col=${col}::${msg}"
-              else
-                # Linker / generic errors without a file location
-                clean="${line//%/%25}"
-                echo "::error::${clean}"
-              fi
+            # 1) Emit one annotation per line containing "error:" — keep it
+            #    dumb: no regex parsing, no escaping beyond %. The text shows
+            #    up verbatim in the Annotations panel of the run.
+            grep "error:" build.log | head -60 | while IFS= read -r line; do
+              clean=$(printf '%s' "$line" | tr -d '\r' | sed 's/%/%25/g')
+              echo "::error::${clean}"
             done
+            # If nothing matched, at least say so loudly.
+            if ! grep -q "error:" build.log; then
+              echo "::error::xcodebuild exited $rc but no line containing 'error:' was found in build.log — the failure is likely in linking or signing. Check the build-log artifact."
+            fi
 
             # 2) Also dump the full picture to the run Summary.
             {
