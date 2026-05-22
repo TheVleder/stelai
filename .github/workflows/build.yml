@@ -2,6 +2,14 @@ name: Build StyleAI
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    # Skip pushes that only touch docs, scripts, or the prepare workflow
+    # — they can't affect the iOS build output.
+    paths-ignore:
+      - "README.md"
+      - "scripts/**"
+      - ".github/workflows/prepare-ml-assets.yml"
 
 jobs:
   build:
