@@ -1,0 +1,92 @@
+name: Prepare ML Assets
+
+# Generates StyleAI/MLAssets/ from the upstream HuggingFace models, then commits
+# the result back to the branch. Run manually whenever the label list, the
+# upstream model checkpoint, or the prompt wording changes.
+#
+# The build workflow (.github/workflows/build.yml) just compiles whatever is
+# already on disk, so devs sideloading a build never need to run this.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # required to commit the generated assets back
+
+jobs:
+  prepare-fashion-classifier:
+    name: Fashion classifier (MobileCLIP-S0)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scripts/requirements.txt
+
+      - name: Build assets
+        run: python scripts/prepare_fashion_classifier.py
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add StyleAI/MLAssets/
+          if git diff --cached --quiet; then
+            echo "No changes — nothing to commit."
+          else
+            git commit -m "chore: regenerate fashion classifier assets"
+            git push
+          fi
+
+  prepare-human-parser:
+    name: Human parser (SegFormer-B4)
+    # Run on macOS — coremltools needs macOS for the ANE-tuned compute paths.
+    runs-on: macos-latest
+    # Don't race the other job for the same files.
+    needs: prepare-fashion-classifier
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: scripts/requirements_human_parser.txt
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scripts/requirements_human_parser.txt
+
+      - name: Convert FASHN Human Parser
+        run: python scripts/prepare_human_parser.py
+
+      - name: Commit & push if changed
+        run: |
+          git pull --rebase
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add StyleAI/MLAssets/HumanParser.mlpackage
+          if git diff --cached --quiet; then
+            echo "No changes — nothing to commit."
+          else
+            git commit -m "chore: regenerate human parser CoreML"
+            git push
+          fi

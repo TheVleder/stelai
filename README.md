@@ -70,13 +70,19 @@ StyleAI/
 
 | Capacidad | API / Modelo | Uso |
 |---|---|---|
-| **Segmentación de persona** | `VNGeneratePersonSegmentationRequest` | Máscara corporal para VTO |
-| **Clasificación de imagen** | `VNClassifyImageRequest` | Tipo de prenda, etiquetas |
+| **Razonamiento de texto** | `FoundationModels` (Apple Intelligence, iOS 26+) | Enriquece prompts SD, genera justificaciones de outfit |
+| **Clasificación de prenda** | MobileCLIP-S0 zero-shot (CoreML, ~25 MB) | Tipo de prenda, índice térmico, tags |
+| **Parsing humano** | FASHN Human Parser SegFormer-B4 (CoreML, ~40 MB tras palettization) | Máscara pixel-perfect por región (top/bottom/shoes) |
+| **Segmentación de persona** | `VNGeneratePersonSegmentationRequest` | Fallback cuando el parser no está |
 | **Extracción de color** | `CIAreaAverage` | Color dominante |
 | **Generación de imagen** | Stable Diffusion 2.1 (CoreML) | VTO foto-realista por inpainting |
 
-- **Vision AI** (built-in) — segmentación + clasificación, sin descargas, ~1s init
-- **Stable Diffusion** (descargable, ~2 GB) — modelo de `apple/coreml-stable-diffusion-2-1-base` de Hugging Face, se descarga al primer uso del VTO
+### Notas
+
+- **FoundationModels** se inicializa al primer uso. Si Apple Intelligence está desactivado en Ajustes, el código cae automáticamente a las cadenas estáticas existentes (no rompe nada).
+- **MobileCLIP + parser** se generan desde HuggingFace vía el workflow `Prepare ML Assets` y se commitean al repo. El binario `.mlpackage` no vive en `main` hasta que se ejecuta el workflow al menos una vez.
+- **FASHN Human Parser** usa la *NVIDIA Source Code License for SegFormer* — válida para sideload personal, **no apta para distribución comercial**. Sustituir por una alternativa propia antes de publicar.
+- **Stable Diffusion** (descargable, ~2 GB) — modelo de `apple/coreml-stable-diffusion-2-1-base` de Hugging Face, se descarga al primer uso del VTO.
 
 ---
 
@@ -89,6 +95,9 @@ StyleAI/
 | **UI** | SwiftUI con diseño "Liquid Glass" |
 | **Persistencia** | SwiftData |
 | **IA (Vision)** | Vision Framework (on-device, built-in) |
+| **IA (Razonamiento)** | Apple FoundationModels (on-device, iOS 26+) |
+| **IA (Clasificación)** | MobileCLIP-S0 vía CoreML (apple/coreml-mobileclip) |
+| **IA (Parsing humano)** | FASHN Human Parser (SegFormer-B4) → CoreML |
 | **IA (Generativa)** | CoreML Stable Diffusion 2.1 (on-device, descargable) |
 | **SPM** | `apple/ml-stable-diffusion` ≥ 1.1.1 |
 | **Clima** | WeatherKit / CoreLocation |
@@ -133,11 +142,12 @@ open StyleAI.xcodeproj
 ```
 
 ### Opción 2: GitHub Actions (Sin Mac)
-Cada push a `main` genera un `.ipa` automáticamente:
-1. Push al repositorio
-2. GitHub Actions compila con `xcodebuild`
-3. Descarga el artefacto `StyleAI.ipa` desde Actions
-4. Sideload con AltStore
+1. **Una vez** (o cuando cambien las labels / modelos): lanza el workflow `Prepare ML Assets` desde la pestaña Actions del repo. Genera `StyleAI/MLAssets/FashionClassifier.mlpackage`, `garment_label_embeddings.json` y `HumanParser.mlpackage`, y los commitea.
+2. Lanza el workflow `Build StyleAI`. Compila con `xcodebuild` y produce un `.ipa` sin firmar.
+3. Descarga el artefacto `StyleAI-unsigned.ipa` desde Actions.
+4. Sideload con AltStore.
+
+Si saltas el paso 1, la app compila igual pero arranca con los caminos legacy (clasificador heurístico de ImageNet y máscara por *body pose*) — todo el código degrada con elegancia cuando los `.mlpackage` no están.
 
 ---
 
@@ -195,12 +205,11 @@ La consola es **arrastrable** y se puede colapsar.
 - [x] Notificaciones push habilitadas
 
 ### 🔮 Roadmap
-- [ ] Inpainting real de prendas (rellenar huecos del cuerpo)
-- [ ] IA generativa (Stable Diffusion / ControlNet) para VTO foto-realista
-- [ ] Búsqueda semántica por embeddings vectoriales
+- [ ] Búsqueda semántica por embeddings vectoriales (reusar MobileCLIP)
 - [ ] Compartir looks generados en redes sociales
 - [ ] Widget de iOS con outfit del día
 - [ ] Soporte para Apple Watch (notificaciones enriquecidas)
+- [ ] Sustituir FASHN Human Parser por una alternativa compatible con uso comercial
 
 ---
 

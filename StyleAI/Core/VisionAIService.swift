@@ -101,12 +101,17 @@ final class VisionAIService {
 
     /// Classifies a garment image and returns type, thermal index, and tag suggestions.
     ///
-    /// Uses `VNClassifyImageRequest` with Apple's built-in ~1000-class model.
-    /// Maps fashion-relevant labels to `GarmentType` and estimates thermal properties.
+    /// Tries the fashion-tuned MobileCLIP classifier first. If its assets are
+    /// not bundled yet (or it returns low confidence), falls back to Apple's
+    /// generic `VNClassifyImageRequest` with the legacy heuristic mapping.
     ///
     /// - Parameter image: A photo of a garment.
     /// - Returns: A `GarmentClassification` with suggested type, tags, and confidence.
     func classifyGarment(_ image: UIImage) async -> GarmentClassification? {
+        if let fashionResult = await FashionClassifier.shared.classify(image) {
+            return fashionResult
+        }
+
         guard let cgImage = image.cgImage else {
             DebugLogger.shared.log("❌ VisionAI: No CGImage for classification", level: .error)
             return nil

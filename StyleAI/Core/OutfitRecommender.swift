@@ -105,6 +105,28 @@ enum OutfitRecommender {
         return recommendations.sorted { $0.matchScore > $1.matchScore }
     }
 
+    /// Returns a copy of `recommendation` with its `explanation` replaced by
+    /// the on-device LLM's version. Falls back to the deterministic text when
+    /// FoundationModels is unavailable.
+    @MainActor
+    static func enrich(_ recommendation: OutfitRecommendation, weather: WeatherData) async -> OutfitRecommendation {
+        let enriched = await LLMService.shared.outfitJustification(
+            topName: recommendation.top.name,
+            bottomName: recommendation.bottom.name,
+            shoesName: recommendation.shoes.name,
+            apparentTempC: weather.apparentTemperature,
+            condition: weather.condition,
+            fallback: recommendation.explanation
+        )
+        return OutfitRecommendation(
+            top: recommendation.top,
+            bottom: recommendation.bottom,
+            shoes: recommendation.shoes,
+            explanation: enriched,
+            matchScore: recommendation.matchScore
+        )
+    }
+
     // MARK: - Private
 
     /// Find the garment with the closest thermal index to the target.

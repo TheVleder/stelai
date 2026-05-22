@@ -438,9 +438,19 @@ struct WeatherStylistView: View {
 
     private func fetchWeather() async {
         await weatherService.fetchWeather()
-        if let weather = weatherService.currentWeather {
-            recommendations = OutfitRecommender.recommendMultiple(for: weather, count: 3)
-            DebugLogger.shared.log("👗 Generated \(recommendations.count) outfit recommendations", level: .success)
+        guard let weather = weatherService.currentWeather else { return }
+
+        recommendations = OutfitRecommender.recommendMultiple(for: weather, count: 3)
+        DebugLogger.shared.log("👗 Generated \(recommendations.count) outfit recommendations", level: .success)
+
+        // Replace the top recommendation's explanation with an LLM-written one.
+        // Done after the deterministic list is already on screen so the user
+        // doesn't wait.
+        if let best = recommendations.first {
+            let enriched = await OutfitRecommender.enrich(best, weather: weather)
+            if let idx = recommendations.firstIndex(where: { $0.top.name == best.top.name }) {
+                recommendations[idx] = enriched
+            }
         }
     }
 }

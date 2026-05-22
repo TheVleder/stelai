@@ -62,6 +62,12 @@ struct OutfitSelection: Equatable, Sendable {
     var count: Int {
         [top, bottom, shoes].compactMap { $0 }.count
     }
+
+    /// Names of every selected garment, in slot order. Used to feed the LLM
+    /// prompt enricher.
+    var allSelectedNames: [String] {
+        [top?.name, bottom?.name, shoes?.name].compactMap { $0 }
+    }
 }
 
 // MARK: - Try-On Engine
@@ -209,19 +215,35 @@ final class TryOnEngine {
         let personMask = await VisionAIService.shared.segmentPerson(from: userPhoto)
         usedRealSegmentation = personMask != nil
 
+        // Step 1a: Run the FASHN human parser (if bundled) for per-garment
+        // region masks. This is what stops SD from painting over the face.
+        let parseResult = await HumanParserService.shared.parse(userPhoto)
+
         // Step 1b: Pre-composite the garments onto the photo (the "pegotes")
         let compositedImage = await Self.compositeOutfit(onto: userPhoto, outfit: outfit, personMask: personMask) ?? userPhoto
 
-        // Step 2: Create precise zone mask using body keypoints (only paint selected garments)
+        // Step 2: Create precise zone mask. Order of preference:
+        //   parser > body-pose rects > proportional rects.
         let clothingMask = createClothingZoneMask(
             personMask: personMask,
             imageSize: userPhoto.size,
             outfit: outfit,
-            sourceImage: userPhoto   // ← body pose keypoints derived from user's actual photo
+            sourceImage: userPhoto,
+            parseResult: parseResult
         )
 
-        // Step 3: Build prompt from garment descriptions
-        let prompt = buildClothingPrompt(outfit: outfit)
+        // Free the parser before SD generation so the ~250 MB doesn't compete
+        // with SD's ~2.5 GB peak on A17 Pro.
+        HumanParserService.shared.unload()
+
+        // Step 3: Build prompt from garment descriptions, then ask the on-device
+        // LLM to enrich it. If FoundationModels isn't available the deterministic
+        // string is returned unchanged.
+        let basePrompt = buildClothingPrompt(outfit: outfit)
+        let prompt = await LLMService.shared.enrichSDPrompt(
+            garments: outfit.allSelectedNames,
+            fallback: basePrompt
+        )
         DebugLogger.shared.log("🎨 VTO AI: Prompt: \"\(prompt)\"", level: .info)
 
         // Step 4: Run Stable Diffusion inpainting on the composited base image
@@ -278,20 +300,80 @@ final class TryOnEngine {
     // MARK: - Clothing Zone Mask (Body Pose AI)
 
     /// Creates an inpainting mask where WHITE = repaint (clothing) and BLACK = keep (face/bg).
-    /// Uses VNHumanBodyPoseRequest for pixel-accurate garment zone boundaries.
+    /// Prefers the FASHN human parser (pixel-accurate per-garment masks). Falls
+    /// back to VNHumanBodyPoseRequest rectangles when the parser isn't
+    /// available, and finally to proportional rectangles when pose detection
+    /// also fails.
     private func createClothingZoneMask(
         personMask: CGImage?,
         imageSize: CGSize,
         outfit: OutfitSelection,
-        sourceImage: UIImage? = nil
+        sourceImage: UIImage? = nil,
+        parseResult: HumanParseResult? = nil
     ) -> UIImage {
-        // Try body pose first for precision
+        // Best path: FASHN human parser
+        if let src = sourceImage, let parseResult,
+           let parsed = createMaskFromHumanParser(
+                parse: parseResult, imageSize: imageSize, outfit: outfit, source: src) {
+            return parsed
+        }
+        // Body pose fallback
         if let src = sourceImage,
            let poseMask = createMaskUsingBodyPose(image: src, imageSize: imageSize, outfit: outfit) {
             return poseMask
         }
-        // Fallback to proportional rects
+        // Proportional rects fallback
         return createMaskUsingProportions(imageSize: imageSize, outfit: outfit, personMask: personMask)
+    }
+
+    /// Builds an inpainting mask directly from the parser's per-pixel labels.
+    /// Combines the regions requested by the outfit (top / bottom / shoes).
+    private func createMaskFromHumanParser(
+        parse: HumanParseResult,
+        imageSize: CGSize,
+        outfit: OutfitSelection,
+        source: UIImage
+    ) -> UIImage? {
+        var regions: [HumanParserRegion] = []
+        if outfit.top    != nil { regions.append(.top) }
+        if outfit.bottom != nil { regions.append(.bottom) }
+        if outfit.shoes  != nil { regions.append(.shoes) }
+        guard !regions.isEmpty else { return nil }
+
+        // Union the per-region masks at the parser's native resolution, then
+        // resize once to the final image size — cheaper than N separate resizes.
+        let parserW = parse.width, parserH = parse.height
+        var unionBytes = [UInt8](repeating: 0, count: parserW * parserH)
+        let activeIDs = Set(regions.flatMap { $0.classIDs }.map { UInt8($0) })
+        for i in 0..<unionBytes.count {
+            unionBytes[i] = activeIDs.contains(parse.labelMap[i]) ? 255 : 0
+        }
+
+        guard let provider = CGDataProvider(data: Data(unionBytes) as CFData),
+              let small = CGImage(
+                width: parserW, height: parserH,
+                bitsPerComponent: 8, bitsPerPixel: 8,
+                bytesPerRow: parserW,
+                space: CGColorSpaceCreateDeviceGray(),
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+                provider: provider, decode: nil,
+                shouldInterpolate: false, intent: .defaultIntent
+              ) else { return nil }
+
+        let w = Int(imageSize.width), h = Int(imageSize.height)
+        guard let ctx = CGContext(
+            data: nil, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: w,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else { return nil }
+        ctx.interpolationQuality = .high
+        ctx.draw(small, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let cg = ctx.makeImage() else { return nil }
+
+        DebugLogger.shared.log("🧍 Mask built from FASHN parser (regions: \(regions.map(\.rawValue).joined(separator: \",\")))", level: .success)
+        _ = source // keeps parameter list aligned with the body-pose path
+        return UIImage(cgImage: cg, scale: 1.0, orientation: .up)
     }
 
     /// Body-pose based clothing mask using actual skeleton keypoints.
