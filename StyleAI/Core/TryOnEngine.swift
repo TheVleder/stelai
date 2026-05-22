@@ -371,7 +371,8 @@ final class TryOnEngine {
         ctx.draw(small, in: CGRect(x: 0, y: 0, width: w, height: h))
         guard let cg = ctx.makeImage() else { return nil }
 
-        DebugLogger.shared.log("🧍 Mask built from FASHN parser (regions: \(regions.map(\.rawValue).joined(separator: \",\")))", level: .success)
+        let regionsList = regions.map(\.rawValue).joined(separator: ",")
+        DebugLogger.shared.log("🧍 Mask built from FASHN parser (regions: \(regionsList))", level: .success)
         _ = source // keeps parameter list aligned with the body-pose path
         return UIImage(cgImage: cg, scale: 1.0, orientation: .up)
     }
