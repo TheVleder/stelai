@@ -55,7 +55,7 @@ jobs:
 
       - name: Build for Device (Unsigned)
         run: |
-          set -o pipefail
+          set +o pipefail   # let xcpretty fail without nuking the script
           xcodebuild build \
             -project StyleAI.xcodeproj \
             -scheme StyleAI \
@@ -66,18 +66,33 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             ONLY_ACTIVE_ARCH=NO \
-            2>&1 | tee build.log | xcpretty
+            > build.log 2>&1
+          rc=$?
+          # Pretty-print succinctly regardless, then surface errors inline.
+          xcpretty < build.log || true
+          if [ $rc -ne 0 ]; then
+            echo ""
+            echo "==================================================================="
+            echo "❌ xcodebuild exit $rc — every error:/warning: line in build.log:"
+            echo "==================================================================="
+            grep -nE "error:|warning:" build.log || echo "(no error lines)"
+            echo ""
+            echo "==================================================================="
+            echo "❌ Last 250 lines of raw xcodebuild output:"
+            echo "==================================================================="
+            tail -250 build.log
+            exit $rc
+          fi
           echo "✅ Build succeeded"
 
-      - name: Surface build errors on failure
+      - name: Upload raw build log on failure
         if: failure()
-        run: |
-          echo "::group::All error: lines from build.log"
-          grep -nE "error:" build.log || echo "(no error: lines found)"
-          echo "::endgroup::"
-          echo "::group::Last 400 lines of build.log"
-          tail -400 build.log || echo "(no build.log)"
-          echo "::endgroup::"
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 14
+          if-no-files-found: warn
 
       - name: Upload raw build log on failure
         if: failure()
