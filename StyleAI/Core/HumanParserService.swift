@@ -171,7 +171,7 @@ final class HumanParserService {
                 let input = try MLDictionaryFeatureProvider(dictionary: [
                     inputName: MLFeatureValue(pixelBuffer: unsafePB)
                 ])
-                let output = try unsafeModel.prediction(from: input)
+                let output = try await unsafeModel.prediction(from: input)
                 guard let logits = output.featureValue(for: outputName)?.multiArrayValue else {
                     return nil
                 }
@@ -229,7 +229,10 @@ final class HumanParserService {
     /// Uses MLMultiArray's subscript (dtype-safe) instead of raw pointer
     /// access — a 6-bit palettized model may report Float16 or Float32 and the
     /// pointer cast would silently read garbage otherwise.
-    private static func argmax(logits: MLMultiArray) -> HumanParseResult? {
+    ///
+    /// `nonisolated` so the detached inference task can call it without
+    /// hopping back to the main actor.
+    nonisolated private static func argmax(logits: MLMultiArray) -> HumanParseResult? {
         let shape = logits.shape.map { $0.intValue }
         guard shape.count == 4, shape[0] == 1, shape[1] == numClasses else { return nil }
         let h = shape[2], w = shape[3]

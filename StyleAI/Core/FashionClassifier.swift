@@ -154,7 +154,7 @@ final class FashionClassifier {
                 let input = try MLDictionaryFeatureProvider(dictionary: [
                     inputName: MLFeatureValue(pixelBuffer: unsafePB)
                 ])
-                let output = try unsafeModel.prediction(from: input)
+                let output = try await unsafeModel.prediction(from: input)
 
                 guard let array = output.featureValue(for: outputName)?.multiArrayValue else {
                     return nil
@@ -228,7 +228,9 @@ final class FashionClassifier {
         return sum
     }
 
-    private static func l2Normalize(_ v: [Float]) -> [Float] {
+    /// `nonisolated` so the detached inference task can call it without
+    /// hopping back to the main actor.
+    nonisolated private static func l2Normalize(_ v: [Float]) -> [Float] {
         var norm: Float = 0
         for x in v { norm += x * x }
         norm = sqrt(norm)
